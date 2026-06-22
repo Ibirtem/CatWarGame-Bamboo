@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CWG-Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.0.0-06.26
+// @version      v1.1.0-06.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
@@ -33,6 +33,9 @@ const bambooDefaultSettings = {
   enableNetworkLogging: false,
   bambooChatHeight: 450,
   showLocationHUD: false,
+
+  eventNotificationSound: "notificationSound1",
+  eventNotificationVolume: 5,
 };
 
 let bambooSettings = {};
@@ -520,6 +523,128 @@ function injectCustomStyles() {
           gap: 4px;
         }
 
+        .custom-select {
+          position: relative;
+          width: 100%;
+          font-family: inherit;
+          font-size: 13px;
+          user-select: none;
+        }
+
+        .select-selected {
+          background-color: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--glass-border);
+          border-radius: 6px;
+          padding: 6px 12px;
+          cursor: pointer;
+          color: var(--text-primary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          transition: background-color 0.2s;
+        }
+
+        .select-selected:hover {
+          background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .select-items {
+          position: absolute;
+          background-color: rgba(20, 20, 20, 0.95);
+          backdrop-filter: blur(10px);
+          border: 1px solid var(--glass-border);
+          border-radius: 6px;
+          left: 0;
+          right: 0;
+          z-index: 99999;
+          max-height: 180px;
+          overflow-y: auto;
+          display: none;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+          margin-top: 4px;
+        }
+
+        .custom-select.active .select-items {
+          display: block;
+        }
+
+        .select-items div {
+          color: var(--text-primary);
+          padding: 8px 12px;
+          cursor: pointer;
+          transition: background-color 0.2s, color 0.2s;
+        }
+
+        .select-items div:hover {
+          background-color: var(--accent);
+          color: #000;
+        }
+
+        .bamboo-input {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--glass-border);
+          border-radius: 6px;
+          padding: 6px 10px;
+          color: #fff;
+          font-family: inherit;
+          font-size: 12px;
+          outline: none;
+          box-sizing: border-box;
+          transition: border-color 0.2s;
+        }
+
+        .bamboo-input:focus {
+          border-color: var(--accent);
+        }
+
+        .bamboo-btn {
+          background: rgba(126, 184, 255, 0.12);
+          border: 1px solid var(--glass-border);
+          color: var(--accent);
+          border-radius: 6px;
+          padding: 6px 12px;
+          cursor: pointer;
+          font-weight: 600;
+          font-size: 12px;
+          font-family: inherit;
+          transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .bamboo-btn:hover {
+          background: rgba(126, 184, 255, 0.25);
+        }
+
+        .bamboo-btn:active {
+          transform: scale(0.95);
+        }
+
+        .bamboo-range-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 6px;
+          border-radius: 3px;
+          background: rgba(255, 255, 255, 0.15);
+          outline: none;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+
+        .bamboo-range-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: var(--accent);
+          cursor: pointer;
+          transition: transform 0.1s;
+        }
+
+        .bamboo-range-slider::-webkit-slider-thumb:hover {
+          transform: scale(1.2);
+        }
+
         .bamboo-reload-notice {
           background-color: rgba(255, 169, 77, 0.1);
           border: 1px solid var(--warning);
@@ -808,8 +933,602 @@ async function loadNewsContent(version) {
 }
 
 // ====================================================================================================================
+//   . . . CUSTOM SOUNDS & DROPDOWNS CONTROLLERS . . .
+// ====================================================================================================================
+
+/**
+ * Loads custom user sounds from storage with a fallback to localStorage.
+ * Keeps data isolated from core settings to prevent corruption.
+ *
+ * @returns {Array<{id: string, name: string, url: string}>} Array of user-defined sounds.
+ */
+function loadCustomSounds() {
+  try {
+    let stored = null;
+    if (typeof GM_getValue !== "undefined") {
+      stored = GM_getValue("bamboo_customSounds", null);
+    } else {
+      const localStored = localStorage.getItem("bamboo_customSounds");
+      if (localStored) {
+        stored = JSON.parse(localStored);
+      }
+    }
+
+    const sounds = Array.isArray(stored) ? stored : [];
+    soundManager.registerSound(sounds);
+  } catch (err) {
+    logger.error("[CWG-Bamboo] Failed to load custom sounds:", err);
+  }
+}
+
+/**
+ * Saves the custom user sounds array back to persistent storage.
+ *
+ * @param {Array<{id: string, name: string, url: string}>} sounds - The custom sounds array.
+ */
+function saveCustomSounds(sounds) {
+  try {
+    if (typeof GM_setValue !== "undefined") {
+      GM_setValue("bamboo_customSounds", sounds);
+    } else {
+      localStorage.setItem("bamboo_customSounds", JSON.stringify(sounds));
+    }
+  } catch (err) {
+    logger.error("[CWG-Bamboo] Failed to save custom sounds:", err);
+  }
+}
+
+/**
+ * Appends a unified "Test Sound" button to the specified container.
+ *
+ * @param {string} containerId - DOM ID of the container element.
+ * @param {string} settingsKeyForSound - The setting key holding the active sound ID.
+ * @param {string} settingsKeyForVolume - The setting key holding the volume value (1-10).
+ */
+function addSoundTestButton(
+  containerId,
+  settingsKeyForSound,
+  settingsKeyForVolume,
+) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  const testButton = document.createElement("button");
+  testButton.className = "bamboo-btn";
+  testButton.style.padding = "4px 8px";
+  testButton.textContent = "Тест звука";
+
+  testButton.addEventListener("click", (e) => {
+    e.preventDefault();
+    const selectedSoundId = bambooSettings[settingsKeyForSound];
+    const volume = bambooSettings[settingsKeyForVolume] || 5;
+    if (selectedSoundId) {
+      soundManager.playSound(selectedSoundId, volume).catch(() => {});
+    }
+  });
+
+  container.appendChild(testButton);
+}
+
+/**
+ * Builds and initializes a custom select element. I really like to steal my own work.
+ *
+ * @param {string} selectId - DOM ID of the select container.
+ * @param {Array<{id: string, name: string}>} options - Dropdown items.
+ */
+function createCustomSelect(selectId, options) {
+  const selectContainer = document.getElementById(selectId);
+  if (!selectContainer) return;
+  const selectedElement = selectContainer.querySelector(".select-selected");
+  const optionsContainer = selectContainer.querySelector(".select-items");
+  if (!selectedElement || !optionsContainer) return;
+
+  if (bambooSettings && bambooSettings[selectId] !== undefined) {
+    const selectedOption = options.find(
+      (option) => option.id === bambooSettings[selectId],
+    );
+    if (selectedOption) {
+      selectedElement.textContent = selectedOption.name;
+    }
+  }
+
+  optionsContainer.innerHTML = "";
+
+  options.forEach((option) => {
+    const optionElement = document.createElement("div");
+    optionElement.textContent = option.name;
+    optionElement.dataset.id = option.id;
+
+    optionElement.addEventListener("click", () => {
+      selectedElement.textContent = option.name;
+      bambooSettings[selectId] = option.id;
+      saveSettings();
+      selectContainer.classList.remove("active");
+    });
+
+    optionsContainer.appendChild(optionElement);
+  });
+
+  if (!selectContainer.dataset.listenerAttached) {
+    selectedElement.addEventListener("click", () => {
+      selectContainer.classList.toggle("active");
+    });
+    selectContainer.dataset.listenerAttached = "true";
+  }
+}
+
+/**
+ * Re-renders user's custom sounds list inside the modal.
+ */
+function renderCustomSoundsList() {
+  const listEl = document.getElementById("custom-sounds-list");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+
+  let stored = null;
+  if (typeof GM_getValue !== "undefined") {
+    stored = GM_getValue("bamboo_customSounds", null);
+  } else {
+    const localStored = localStorage.getItem("bamboo_customSounds");
+    if (localStored) {
+      stored = JSON.parse(localStored);
+    }
+  }
+  const sounds = Array.isArray(stored) ? stored : [];
+
+  if (sounds.length === 0) {
+    listEl.innerHTML =
+      "<p style='opacity: 0.5; text-align: center; margin: 0; font-size: 11px;'>Нет добавленных звуков.</p>";
+    return;
+  }
+
+  sounds.forEach((sound) => {
+    const itemEl = document.createElement("div");
+    itemEl.style.cssText =
+      "display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08); font-size: 11px; gap: 8px;";
+
+    const meta = document.createElement("div");
+    meta.style.cssText =
+      "display: flex; flex-direction: column; overflow: hidden; margin-right: 10px; flex: 1;";
+
+    const nameEl = document.createElement("span");
+    nameEl.style.cssText = "font-weight: bold;";
+    nameEl.textContent = sound.name;
+
+    const urlEl = document.createElement("span");
+    urlEl.style.cssText =
+      "font-size: 10px; opacity: 0.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
+    urlEl.textContent = sound.url;
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "display: flex; gap: 4px;";
+
+    const playBtn = document.createElement("button");
+    playBtn.className = "bamboo-btn";
+    playBtn.style.padding = "2px 6px";
+    playBtn.textContent = "▶";
+    playBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      soundManager.playSound(sound.id, 5).catch(() => {});
+    });
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "bamboo-btn";
+    deleteBtn.style.cssText =
+      "padding: 2px 6px; border-color: var(--error); color: var(--error); background: rgba(255,107,107,0.1);";
+    deleteBtn.textContent = "✖";
+    deleteBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      deleteCustomSound(sound.id);
+    });
+
+    meta.append(nameEl, urlEl);
+    actions.append(playBtn, deleteBtn);
+    itemEl.append(meta, actions);
+
+    listEl.appendChild(itemEl);
+  });
+}
+
+/**
+ * Rebuilds all sound-related custom select dropdowns dynamically.
+ * Zero hardcode. Processes any select ending with "Sound".
+ */
+function updateAllSoundSelects() {
+  const currentSounds = soundManager.getSoundList();
+
+  document.querySelectorAll(".custom-select").forEach((selectContainer) => {
+    const selectId = selectContainer.id;
+    if (selectId && selectId.endsWith("Sound")) {
+      createCustomSelect(selectId, currentSounds);
+
+      const baseName = selectId.replace("Sound", "");
+      const testContainerId = `${baseName}SoundContainer`;
+      const volKey = `${baseName}Volume`;
+
+      addSoundTestButton(testContainerId, selectId, volKey);
+    }
+  });
+}
+
+/**
+ * Deletes custom sound.
+ *
+ * @param {string} id - The sound ID.
+ */
+function deleteCustomSound(id) {
+  if (!confirm("Вы уверены, что хотите удалить этот звук?")) return;
+
+  let stored = null;
+  if (typeof GM_getValue !== "undefined") {
+    stored = GM_getValue("bamboo_customSounds", null);
+  } else {
+    const localStored = localStorage.getItem("bamboo_customSounds");
+    if (localStored) {
+      stored = JSON.parse(localStored);
+    }
+  }
+  let sounds = Array.isArray(stored) ? stored : [];
+  sounds = sounds.filter((s) => s.id !== id);
+
+  if (typeof GM_setValue !== "undefined") {
+    GM_setValue("bamboo_customSounds", sounds);
+  } else {
+    localStorage.setItem("bamboo_customSounds", JSON.stringify(sounds));
+  }
+
+  soundManager.unregisterSound(id);
+  renderCustomSoundsList();
+  updateAllSoundSelects();
+}
+
+// ====================================================================================================================
+//   . . . SOUND MANAGER . . .
+// ====================================================================================================================
+
+/**
+ * @typedef {Object} SoundDefinition
+ * @property {string} id - Unique identifier for the sound.
+ * @property {string} name - Display name for the UI.
+ * @property {string} url - Source URL of the audio file.
+ * @property {boolean} isCustom - Indicates if the sound is user-defined.
+ * @property {HTMLAudioElement|null} audio - Cached Audio instance.
+ */
+
+function createSoundManager() {
+  /** @type {Map<string, SoundDefinition>} */
+  const soundRegistry = new Map();
+  let isUserInteracted = false;
+  let pendingSounds = [];
+
+  /**
+   * Retrieves or initializes an Audio instance for the given sound ID.
+   *
+   * @param {string} id - The sound identifier.
+   * @returns {HTMLAudioElement|null} The cached Audio instance.
+   */
+  function getAudioInstance(id) {
+    const soundDef = soundRegistry.get(id);
+    if (!soundDef) return null;
+
+    if (!soundDef.audio) {
+      soundDef.audio = new Audio(soundDef.url);
+    }
+    return soundDef.audio;
+  }
+
+  /**
+   * Registers sound files in the manager. Supports both a single sound definition
+   * and an array of sound objects.
+   *
+   * @param {string|Array<Object>} idOrSounds - Unique identifier, or an array of sound objects.
+   * @param {string} [name] - Display name for the UI.
+   * @param {string} [url] - Source URL of the audio file.
+   * @param {boolean} [isCustom=false] - Indicates if the sound is user-defined.
+   */
+  function registerSound(idOrSounds, name, url, isCustom = false) {
+    if (Array.isArray(idOrSounds)) {
+      idOrSounds.forEach((sound) => {
+        if (sound && sound.id && sound.name && sound.url) {
+          soundRegistry.set(sound.id, {
+            id: sound.id,
+            name: sound.name,
+            url: sound.url,
+            isCustom: !!sound.isCustom,
+            audio: null,
+          });
+        }
+      });
+    } else if (typeof idOrSounds === "string") {
+      soundRegistry.set(idOrSounds, {
+        id: idOrSounds,
+        name: name || "",
+        url: url || "",
+        isCustom: !!isCustom,
+        audio: null,
+      });
+    }
+  }
+
+  /**
+   * Removes a sound from the registry by its ID.
+   *
+   * @param {string} id - The sound identifier to remove.
+   */
+  function unregisterSound(id) {
+    soundRegistry.delete(id);
+  }
+
+  /**
+   * Returns a formatted list of all registered sounds for UI dropdowns.
+   *
+   * @returns {Array<{id: string, name: string, isCustom: boolean}>} Array of registered sound definitions.
+   */
+  function getSoundList() {
+    return Array.from(soundRegistry.values()).map((def) => ({
+      id: def.id,
+      name: def.name,
+      isCustom: def.isCustom,
+    }));
+  }
+
+  /**
+   * Plays the sound with the given ID and volume. Handles browser autoplay policies.
+   *
+   * @param {string} id - The sound identifier.
+   * @param {number} volume - Volume level (0 to 10).
+   * @returns {Promise<void>} Resolves when audio play successfully starts.
+   */
+  function playSound(id, volume) {
+    return new Promise((resolve, reject) => {
+      const audio = getAudioInstance(id);
+      if (audio) {
+        audio.currentTime = 0;
+        audio.volume = Math.max(0, Math.min(1, volume / 10));
+
+        audio
+          .play()
+          .then(resolve)
+          .catch((error) => {
+            if (!isUserInteracted) {
+              logger.warn(
+                "[CWG-Bamboo] Audio blocked by autoplay policy. Waiting for user interaction.",
+              );
+              pendingSounds.push({ id, volume, resolve });
+            } else {
+              logger.warn(`[CWG-Bamboo] Failed to play sound ${id}:`, error);
+              reject(error);
+            }
+          });
+      } else {
+        reject(new Error(`[CWG-Bamboo] Sound with ID ${id} not found.`));
+      }
+    });
+  }
+
+  function playSoundNow(id, volume, resolve) {
+    const audio = getAudioInstance(id);
+    if (audio) {
+      audio.volume = Math.max(0, Math.min(1, volume / 10));
+      audio
+        .play()
+        .then(resolve)
+        .catch((error) => {
+          logger.error(
+            `[CWG-Bamboo] Failed to play pending sound ${id}:`,
+            error,
+          );
+          resolve();
+        });
+    }
+  }
+
+  function handleUserInteraction() {
+    isUserInteracted = true;
+
+    document.removeEventListener("mousedown", handleUserInteraction);
+    document.removeEventListener("touchstart", handleUserInteraction);
+    document.removeEventListener("keydown", handleUserInteraction);
+
+    pendingSounds.forEach(({ id, volume, resolve }) => {
+      playSoundNow(id, volume, resolve);
+    });
+    pendingSounds = [];
+  }
+
+  document.addEventListener("mousedown", handleUserInteraction);
+  document.addEventListener("touchstart", handleUserInteraction);
+  document.addEventListener("keydown", handleUserInteraction);
+
+  return {
+    registerSound,
+    unregisterSound,
+    getSoundList,
+    playSound,
+  };
+}
+
+const soundManager = createSoundManager();
+
+soundManager.registerSound([
+  {
+    id: "notificationSound1",
+    name: "Звук 1",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/notification_1.mp3",
+  },
+  {
+    id: "notificationSound2",
+    name: "Звук 2",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/notification_2.mp3",
+  },
+  {
+    id: "notificationSound3",
+    name: "Звук 3",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/notification_3.mp3",
+  },
+  {
+    id: "notificationBlockSound1",
+    name: "Блокирование",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/block_1.mp3",
+  },
+]);
+
+// ====================================================================================================================
 //   . . . MODAL UI . . .
 // ====================================================================================================================
+
+/**
+ * Returns the inner HTML markup for the Settings Modal.
+ *
+ * @param {string} errorHTML - The error alert container HTML (empty if storage API is available).
+ * @returns {string} Fully structured HTML template.
+ */
+const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
+  <div class="glass-panel bamboo-settings-container">
+    <div class="bamboo-settings-header">
+      <span>🎋 Настройки Бамбука</span>
+      <button class="bamboo-close-btn" id="bamboo-close-btn">&times;</button>
+    </div>
+
+    ${errorHTML}
+    <div class="bamboo-reload-notice" id="cwg-bamboo-reload-notice">
+      ⏳ Для гарантированного применения изменений перезагрузите страницу.
+    </div>
+
+    <div class="bamboo-settings-content">
+      <!-- HUD Overlays -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Интерфейс (HUD)</div>
+        <div class="bamboo-setting-row">
+          <span>Показывать время</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showTimeHUD"
+          />
+        </div>
+        <div class="bamboo-setting-row">
+          <span>Показывать локацию</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showLocationHUD"
+          />
+        </div>
+      </div>
+
+      <!-- Chat & Communication -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">
+          Общение и Взаимодействие
+        </div>
+        <div class="bamboo-setting-row">
+          <span>Улучшенный чат</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableBambooChat"
+          />
+        </div>
+      </div>
+
+      <!-- Sounds & Notifications -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Звуки и Уведомления</div>
+        <div
+          class="bamboo-setting-row"
+          style="flex-direction: column; align-items: flex-start; gap: 6px;"
+        >
+          <span>Уведомление События</span>
+          <div
+            style="display: flex; gap: 8px; width: 100%; align-items: center;"
+          >
+            <div
+              class="custom-select"
+              id="eventNotificationSound"
+              style="flex: 1;"
+            >
+              <div class="select-selected">Выберите звук</div>
+              <div class="select-items"></div>
+            </div>
+            <div
+              class="volume-control"
+              style="width: 110px; display: flex; align-items: center; gap: 6px;"
+            >
+              <span>🔊</span>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                class="bamboo-range-slider"
+                id="eventNotificationVolume"
+                data-setting="eventNotificationVolume"
+              />
+            </div>
+            <div id="eventNotificationSoundContainer"></div>
+          </div>
+        </div>
+
+        <!-- Add Custom Sound Form -->
+        <div
+          style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; margin-top: 4px; display: flex; flex-direction: column; gap: 8px;"
+        >
+          <div
+            style="font-size: 11px; opacity: 0.7; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;"
+          >
+            Добавить свой звук:
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <input
+              type="text"
+              id="custom-sound-name"
+              placeholder="Название"
+              class="bamboo-input"
+              style="width: 100px;"
+            />
+            <input
+              type="text"
+              id="custom-sound-url"
+              placeholder="URL"
+              class="bamboo-input"
+              style="flex: 1;"
+            />
+            <button id="add-custom-sound-btn" class="bamboo-btn">＋</button>
+          </div>
+          <div
+            id="custom-sounds-list"
+            style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;"
+          ></div>
+        </div>
+      </div>
+
+      <!-- System, Logging & Debug -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Отладка и Разработка</div>
+        <div class="bamboo-setting-row">
+          <span>Логирование мода</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableLogging"
+          />
+        </div>
+        <div class="bamboo-setting-row">
+          <span>Логирование сети</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableNetworkLogging"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div class="bamboo-settings-footer"></div>
+  </div>
+`;
 
 /**
  * Matches DOM inputs with active settings values on load.
@@ -882,9 +1601,6 @@ function createSettingsModal() {
   overlay.className = "bamboo-modal-overlay";
   overlay.id = "cwg-bamboo-modal";
 
-  const scriptVersion =
-    typeof GM_info !== "undefined" ? GM_info.script.version : "v?.?.?";
-
   const hasGMSupport =
     typeof GM_getValue !== "undefined" && typeof GM_setValue !== "undefined";
 
@@ -892,95 +1608,124 @@ function createSettingsModal() {
     ? `<div class="bamboo-storage-error">⚠️ Tampermonkey API недоступно. Настройки будут сохранены локально для этого домена.</div>`
     : "";
 
-  overlay.innerHTML = /* HTML */ `
-    <div class="glass-panel bamboo-settings-container">
-      <div class="bamboo-settings-header">
-        <span>🎋 Настройки Бамбука</span>
-        <button class="bamboo-close-btn" id="bamboo-close-btn">&times;</button>
-      </div>
-
-      ${errorHTML}
-      <div class="bamboo-reload-notice" id="cwg-bamboo-reload-notice">
-        ⏳ Для гарантированного применения изменений перезагрузите страницу.
-      </div>
-
-      <div class="bamboo-settings-content">
-        <!-- HUD Overlays -->
-        <div class="bamboo-settings-category">
-          <div class="bamboo-settings-category-title">Интерфейс (HUD)</div>
-          <div class="bamboo-setting-row">
-            <span>Показывать время</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="showTimeHUD"
-            />
-          </div>
-          <div class="bamboo-setting-row">
-            <span>Показывать локацию</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="showLocationHUD"
-            />
-          </div>
-        </div>
-
-        <!-- Chat & Communication -->
-        <div class="bamboo-settings-category">
-          <div class="bamboo-settings-category-title">
-            Общение и Взаимодействие
-          </div>
-          <div class="bamboo-setting-row">
-            <span>Улучшенный чат</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="enableBambooChat"
-            />
-          </div>
-        </div>
-
-        <!-- System, Logging & Debug -->
-        <div class="bamboo-settings-category">
-          <div class="bamboo-settings-category-title">Отладка и Разработка</div>
-          <div class="bamboo-setting-row">
-            <span>Логирование мода</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="enableLogging"
-            />
-          </div>
-          <div class="bamboo-setting-row">
-            <span>Логирование сети</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="enableNetworkLogging"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div class="bamboo-settings-footer"></div>
-    </div>
-  `;
-
+  overlay.innerHTML = getSettingsModalTemplate(errorHTML);
   document.body.appendChild(overlay);
 
   syncSettingsUI();
   bindSettingsListeners();
 
   renderFooterNews();
+  renderCustomSoundsList();
+  updateAllSoundSelects();
 
-  document.getElementById("bamboo-close-btn").addEventListener("click", () => {
+  initSettingsModalEvents(overlay);
+}
+
+/**
+ * Wires up event listeners for inputs, custom controls, and custom sound uploads
+ * inside the settings modal.
+ *
+ * @param {HTMLElement} overlay - The settings modal overlay element.
+ */
+function initSettingsModalEvents(overlay) {
+  overlay.querySelectorAll('input[type="range"]').forEach((slider) => {
+    slider.addEventListener("change", (e) => {
+      const val = Number(e.target.value);
+      const setting = e.target.dataset.setting;
+      bambooSettings[setting] = val;
+      saveSettings();
+    });
+  });
+
+  const addBtn = overlay.querySelector("#add-custom-sound-btn");
+  if (addBtn) {
+    addBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      handleCustomSoundUpload(overlay);
+    });
+  }
+
+  overlay.querySelector("#bamboo-close-btn").addEventListener("click", () => {
     overlay.classList.remove("active");
   });
 
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.classList.remove("active");
+    if (e.target === overlay) {
+      overlay.classList.remove("active");
+    }
   });
+}
+
+/**
+ * Handles parsing, validating, and saving a new custom sound from modal input fields.
+ *
+ * @param {HTMLElement} overlay - The settings modal overlay element.
+ */
+function handleCustomSoundUpload(overlay) {
+  const nameInput = overlay.querySelector("#custom-sound-name");
+  const urlInput = overlay.querySelector("#custom-sound-url");
+  const name = nameInput.value.trim();
+  const url = urlInput.value.trim();
+
+  if (!name || !url) {
+    alert("Пожалуйста, заполните оба поля (Название и URL).");
+    return;
+  }
+
+  const id =
+    "customSound_" +
+    Date.now() +
+    "_" +
+    Math.random().toString(36).substring(2, 7);
+  const newSound = { id, name, url };
+
+  let stored = null;
+  if (typeof GM_getValue !== "undefined") {
+    stored = GM_getValue("bamboo_customSounds", null);
+  } else {
+    const localStored = localStorage.getItem("bamboo_customSounds");
+    if (localStored) {
+      stored = JSON.parse(localStored);
+    }
+  }
+  const sounds = Array.isArray(stored) ? stored : [];
+  sounds.push(newSound);
+
+  if (typeof GM_setValue !== "undefined") {
+    GM_setValue("bamboo_customSounds", sounds);
+  } else {
+    localStorage.setItem("bamboo_customSounds", JSON.stringify(sounds));
+  }
+
+  soundManager.registerSound(id, name, url, true);
+
+  nameInput.value = "";
+  urlInput.value = "";
+
+  renderCustomSoundsList();
+  updateAllSoundSelects();
+}
+
+/**
+ * Compares two version strings (e.g., "v1.46.0-06.26" vs "v1.0.0-06.26").
+ * Returns 1 if v1 > v2, -1 if v1 < v2, and 0 if equal.
+ *
+ * @param {string} v1 - First version string.
+ * @param {string} v2 - Second version string.
+ * @returns {number} Comparison result.
+ */
+function compareVersions(v1, v2) {
+  const clean = (v) => v.replace(/^v/, "").split("-")[0].split(".").map(Number);
+  const p1 = clean(v1);
+  const p2 = clean(v2);
+
+  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+    const num1 = p1[i] || 0;
+    const num2 = p2[i] || 0;
+    if (num1 > num2) return 1;
+    if (num1 < num2) return -1;
+  }
+  return 0;
 }
 
 /**
@@ -1016,11 +1761,18 @@ async function renderFooterNews() {
     return;
   }
 
-  const isLatest = manifest.latest === scriptVersion;
+  const verComparison = compareVersions(scriptVersion, manifest.latest);
+  const isLatest = verComparison === 0;
+  const isLocalOlder = verComparison === -1;
+
   if (statusElement) {
-    statusElement.innerHTML = isLatest
-      ? `<span style="color: #a9e08f;">● Актуальная</span>`
-      : `<span style="color: var(--warning); font-weight: 700;">● Обновление: ${manifest.latest}</span>`;
+    if (verComparison === 1) {
+      statusElement.innerHTML = `<span style="color: #7eb8ff;">● Вы что, тестировщик или разраб?</span>`;
+    } else if (isLatest) {
+      statusElement.innerHTML = `<span style="color: #a9e08f;">● Актуальная</span>`;
+    } else {
+      statusElement.innerHTML = `<span style="color: var(--warning); font-weight: 700;">● Обновление: ${manifest.latest}</span>`;
+    }
   }
 
   if (listElement && Array.isArray(manifest.updates)) {
@@ -1697,6 +2449,9 @@ async function initMod() {
   logger.log("[CWG Mod] Initializing...");
 
   loadSettings();
+
+  loadCustomSounds();
+
   injectCustomStyles();
   createSettingsModal();
 
