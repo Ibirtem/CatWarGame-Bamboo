@@ -28,6 +28,9 @@
 
 const bambooDefaultSettings = {
   showTimeHUD: false,
+  showDateHUD: false,
+  showLocationHUD: false,
+
   enableBambooChat: false,
   enableLogging: false,
   enableNetworkLogging: false,
@@ -1548,6 +1551,14 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
           />
         </div>
         <div class="bamboo-setting-row">
+          <span>Показывать дату</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showDateHUD"
+          />
+        </div>
+        <div class="bamboo-setting-row">
           <span>Показывать локацию</span>
           <input
             type="checkbox"
@@ -1716,6 +1727,19 @@ function bindSettingsListeners() {
       if (setting === "showTimeHUD") {
         const timeHud = document.getElementById("cwg-bamboo-time");
         if (timeHud) timeHud.style.display = element.checked ? "flex" : "none";
+      }
+
+      if (setting === "showDateHUD") {
+        const dateHud = document.getElementById("cwg-bamboo-date");
+        if (element.checked) {
+          if (dateHud) {
+            dateHud.style.display = "flex";
+          } else {
+            initDateHUD();
+          }
+        } else {
+          if (dateHud) dateHud.style.display = "none";
+        }
       }
 
       if (setting === "showLocationHUD") {
@@ -2128,6 +2152,54 @@ function formatGameTime(rawDate, vTime) {
 }
 
 /**
+ * Safely formats the game date into a readable string (e.g., "01.08.3").
+ * Calculates the current season based on the in-game moon (month).
+ *
+ * @param {any} rawDate - Raw game date object from getDate().
+ * @param {any} vTime - Raw virtual time object from getVirtualTime().
+ * @returns {string} Formatted date string or fallback text.
+ */
+function formatGameDate(rawDate, vTime) {
+  let year, moon, date;
+
+  if (rawDate && typeof rawDate.year === "number") {
+    year = rawDate.year;
+    moon = rawDate.moon;
+    date = rawDate.date;
+  } else if (
+    rawDate &&
+    Array.isArray(rawDate.value) &&
+    rawDate.value.length >= 5
+  ) {
+    year = rawDate.value[0];
+    moon = rawDate.value[1];
+    date = rawDate.value[2];
+  } else if (
+    vTime &&
+    vTime.virtualDate &&
+    Array.isArray(vTime.virtualDate.value)
+  ) {
+    year = vTime.virtualDate.value[0];
+    moon = vTime.virtualDate.value[1];
+    date = vTime.virtualDate.value[2];
+  } else {
+    return "📅 Sync...";
+  }
+
+  let emoji = "📅";
+  if (moon === 11 || moon === 0 || moon === 1) emoji = "❄️";
+  else if (moon >= 2 && moon <= 4) emoji = "🌸";
+  else if (moon >= 5 && moon <= 7) emoji = "☀️";
+  else if (moon >= 8 && moon <= 10) emoji = "🍁";
+
+  const formattedDate = String(date + 1).padStart(2, "0");
+  const formattedMoon = String(moon + 1).padStart(2, "0");
+  const formattedYear = String(year + 1);
+
+  return `${emoji} ${formattedDate}.${formattedMoon}.${formattedYear}`;
+}
+
+/**
  * Injects the custom time display into the game's top-right HUD.
  * Connects to the unsafeWindow API to pull real-time game data gracefully.
  */
@@ -2173,6 +2245,52 @@ function initTimeHUD() {
         }
       } catch (err) {
         timeElement.innerText = "⚠️ Err";
+      }
+    }, 1000);
+  });
+}
+
+/**
+ * Injects the custom date display into the game's top-right HUD.
+ */
+function initDateHUD() {
+  if (!bambooSettings.showDateHUD) return;
+
+  const targetSelector = ".MuiStack-root.css-1byqyzy";
+  setupSingleCallback(targetSelector, (targetContainer) => {
+    if (document.getElementById("cwg-bamboo-date")) return;
+
+    const dateElement = document.createElement("div");
+    dateElement.className = "glass-panel glass-hud-item";
+    dateElement.id = "cwg-bamboo-date";
+    dateElement.innerText = "📅 Sync...";
+
+    const timeElement = document.getElementById("cwg-bamboo-time");
+    if (timeElement) {
+      targetContainer.insertBefore(dateElement, timeElement);
+    } else {
+      targetContainer.appendChild(dateElement);
+    }
+
+    const gameWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+
+    setInterval(() => {
+      try {
+        if (gameWindow.CWGPlayground) {
+          const rawDate =
+            typeof gameWindow.CWGPlayground.getDate === "function"
+              ? gameWindow.CWGPlayground.getDate()
+              : null;
+          const vTime =
+            typeof gameWindow.CWGPlayground.getVirtualTime === "function"
+              ? gameWindow.CWGPlayground.getVirtualTime()
+              : null;
+
+          dateElement.innerText = formatGameDate(rawDate, vTime);
+        }
+      } catch (err) {
+        dateElement.innerText = "⚠️ Err";
       }
     }, 1000);
   });
@@ -2681,6 +2799,10 @@ function initPlayPage() {
 
   if (bambooSettings.showTimeHUD) {
     initTimeHUD();
+  }
+
+  if (bambooSettings.showDateHUD) {
+    initDateHUD();
   }
 
   if (bambooSettings.showLocationHUD) {
