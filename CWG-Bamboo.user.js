@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CWG-Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.0.0-06.26
+// @version      v1.1.0-06.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
@@ -28,11 +28,19 @@
 
 const bambooDefaultSettings = {
   showTimeHUD: false,
+  showDateHUD: false,
+  showLocationHUD: false,
+
   enableBambooChat: false,
   enableLogging: false,
   enableNetworkLogging: false,
   bambooChatHeight: 450,
-  showLocationHUD: false,
+
+  eventNotificationSound: "notificationSound1",
+  eventNotificationVolume: 5,
+  enableEventNotification: false,
+
+  hudTheme: "native",
 };
 
 let bambooSettings = {};
@@ -220,6 +228,90 @@ const logger = {
 })();
 
 // ====================================================================================================================
+//   . . . THEME MANAGEMENT . . .
+// ====================================================================================================================
+
+const bambooDefaultThemes = {
+  glass: {
+    hudBg: "rgba(255, 255, 255, 0.05)",
+    hudBorder: "rgba(255, 255, 255, 0.2)",
+    hudBlur: "16px",
+    hudText: "#ffffff",
+
+    hudUpperBg: "rgba(255, 255, 255, 0.05)",
+    hudUpperBorder: "rgba(255, 255, 255, 0.2)",
+    hudUpperBlur: "16px",
+    hudUpperText: "#ffffff",
+
+    msgBg: "rgba(255, 255, 255, 0.06)",
+    msgBorder: "rgba(255, 255, 255, 0.1)",
+    msgSelfBg: "rgba(126, 184, 255, 0.12)",
+    msgSelfBorder: "rgba(126, 184, 255, 0.25)",
+  },
+  native: {
+    hudBg: "rgba(20, 20, 20, 0.35)",
+    hudBorder: "rgba(255, 255, 255, 0.08)",
+    hudBlur: "4px",
+    hudText: "#ffffff",
+
+    hudUpperBg: "rgba(15, 15, 15, 0.75)",
+    hudUpperBorder: "rgba(255, 255, 255, 0.08)",
+    hudUpperBlur: "4px",
+    hudUpperText: "#ffffff",
+
+    msgBg: "rgba(255, 255, 255, 0.04)",
+    msgBorder: "rgba(255, 255, 255, 0.08)",
+    msgSelfBg: "rgba(144, 202, 249, 0.08)",
+    msgSelfBorder: "rgba(144, 202, 249, 0.2)",
+  },
+};
+
+/**
+ * Dynamically generates and injects CSS variables for the selected theme.
+ * Leaves the settings modal "native" by default, but allows overriding.
+ */
+function applyBambooTheme() {
+  const themeId = bambooSettings.hudTheme || "native";
+  const theme = bambooDefaultThemes[themeId] || bambooDefaultThemes["native"];
+
+  const oldStyle = document.getElementById("cwg-bamboo-theme-vars");
+  if (oldStyle) oldStyle.remove();
+
+  const style = document.createElement("style");
+  style.id = "cwg-bamboo-theme-vars";
+
+  style.textContent = /* CSS */ `
+    :root {
+      --bamboo-accent: #7eb8ff;
+      --bamboo-error: #ff6b6b;
+      --bamboo-warning: #ffa94d;
+      --bamboo-text-primary: #ffffff;
+      --bamboo-text-secondary: rgba(255, 255, 255, 0.6);
+
+      --bamboo-modal-bg: rgba(255, 255, 255, 0.05);
+      --bamboo-modal-border: rgba(255, 255, 255, 0.2);
+      --bamboo-modal-blur: 16px;
+
+      --bamboo-hud-bg: ${theme.hudBg};
+      --bamboo-hud-border: ${theme.hudBorder};
+      --bamboo-hud-blur: ${theme.hudBlur};
+      --bamboo-hud-text: ${theme.hudText};
+
+      --bamboo-hud-upper-bg: ${theme.hudUpperBg};
+      --bamboo-hud-upper-border: ${theme.hudUpperBorder};
+      --bamboo-hud-upper-blur: ${theme.hudUpperBlur};
+      --bamboo-hud-upper-text: ${theme.hudUpperText};
+      
+      --bamboo-msg-bg: ${theme.msgBg};
+      --bamboo-msg-border: ${theme.msgBorder};
+      --bamboo-msg-self-bg: ${theme.msgSelfBg};
+      --bamboo-msg-self-border: ${theme.msgSelfBorder};
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// ====================================================================================================================
 //   . . . CSS INJECTION . . .
 // ====================================================================================================================
 
@@ -230,30 +322,24 @@ function injectCustomStyles() {
   const style = document.createElement("style");
   style.id = "cwg-bamboo-styles";
   style.textContent = /* CSS */ `
-        :root {
-          --glass-bg: rgba(255, 255, 255, 0.05);
-          --glass-border: rgba(255, 255, 255, 0.2);
-          --glass-blur: 16px;
-          --glass-radius: 12px;
-          --accent: #7eb8ff;
-          --error: #ff6b6b;
-          --warning: #ffa94d;
-          --text-primary: #ffffff;
-          --text-secondary: rgba(255, 255, 255, 0.6);
-        }
-        
         .glass-panel {
-          background-color: var(--glass-bg);
-          border: 1px solid var(--glass-border);
-          backdrop-filter: blur(var(--glass-blur));
-          -webkit-backdrop-filter: blur(var(--glass-blur));
-          border-radius: var(--glass-radius);
+          background-color: var(--bamboo-hud-bg);
+          border: 1px solid var(--bamboo-hud-border);
+          backdrop-filter: blur(var(--bamboo-hud-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-hud-blur));
+          border-radius: 12px;
           box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.2);
-          color: var(--text-primary);
+          color: var(--bamboo-hud-text);
           font-family: "Montserrat", sans-serif;
         }
         
         .glass-hud-item {
+          background-color: var(--bamboo-hud-upper-bg);
+          border-color: var(--bamboo-hud-upper-border);
+          backdrop-filter: blur(var(--bamboo-hud-upper-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-hud-upper-blur));
+          color: var(--bamboo-hud-upper-text);
+          
           display: flex;
           align-items: center;
           justify-content: center;
@@ -264,11 +350,15 @@ function injectCustomStyles() {
           height: 30px;
           box-sizing: border-box;
           margin-left: 8px;
-          border-radius: var(--glass-radius);
+          border-radius: 12px;
           line-height: 1;
         }
 
         .bamboo-circular-btn {
+          background-color: var(--bamboo-hud-upper-bg);
+          border: 1px solid var(--bamboo-hud-upper-border);
+          color: var(--bamboo-hud-upper-text);
+          
           width: 34px;
           height: 34px;
           border-radius: 50%;
@@ -276,9 +366,6 @@ function injectCustomStyles() {
           align-items: center;
           justify-content: center;
           cursor: pointer;
-          border: 1px solid var(--glass-border);
-          background-color: var(--glass-bg);
-          color: var(--text-primary);
           transition: background-color 0.2s ease, transform 0.1s ease;
           font-size: 18px;
           padding: 0;
@@ -312,7 +399,7 @@ function injectCustomStyles() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          border-bottom: 1px solid var(--glass-border);
+          border-bottom: 1px solid var(--bamboo-hud-border);
           padding-bottom: 6px;
           margin-bottom: 8px;
           user-select: none;
@@ -326,21 +413,21 @@ function injectCustomStyles() {
         }
 
         .bamboo-chat-tab {
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           cursor: pointer;
           transition: color 0.2s;
         }
 
         .bamboo-chat-tab.active {
-          color: var(--accent);
-          border-bottom: 1px solid var(--accent);
+          color: var(--bamboo-accent);
+          border-bottom: 1px solid var(--bamboo-accent);
           padding-bottom: 2px;
         }
 
         .bamboo-resize-handle {
           width: 16px;
           height: 16px;
-          background-color: var(--glass-border);
+          background-color: var(--bamboo-hud-border);
           border-radius: 4px;
           cursor: ns-resize;
           opacity: 0.6;
@@ -350,7 +437,7 @@ function injectCustomStyles() {
           justify-content: center;
           font-size: 10px;
           line-height: 1;
-          color: var(--text-primary);
+          color: var(--bamboo-hud-text);
           user-select: none;
           font-weight: bold;
           box-sizing: border-box;
@@ -358,7 +445,7 @@ function injectCustomStyles() {
 
         .bamboo-resize-handle:hover {
           opacity: 1;
-          background-color: var(--accent);
+          background-color: var(--bamboo-accent);
         }
 
         #cwg-bamboo-chat-messages {
@@ -375,11 +462,11 @@ function injectCustomStyles() {
           font-size: 13px;
           line-height: 1.4;
           word-break: break-word;
-          color: var(--text-primary);
+          color: var(--bamboo-hud-text);
           padding: 6px 12px;
           border-radius: 12px;
-          background: rgba(255, 255, 255, 0.06);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: var(--bamboo-msg-bg);
+          border: 1px solid var(--bamboo-msg-border);
           max-width: 85%;
           align-self: flex-start;
           box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
@@ -388,12 +475,12 @@ function injectCustomStyles() {
 
         .bamboo-chat-msg.self {
           align-self: flex-end;
-          background: rgba(126, 184, 255, 0.12);
-          border-color: rgba(126, 184, 255, 0.25);
+          background: var(--bamboo-msg-self-bg);
+          border-color: var(--bamboo-msg-self-border);
         }
 
         .bamboo-chat-msg .time {
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           font-size: 12px;
           margin-right: 6px;
           font-family: monospace;
@@ -401,11 +488,11 @@ function injectCustomStyles() {
 
         .bamboo-chat-msg .author {
           font-weight: 700;
-          color: var(--accent);
+          color: var(--bamboo-accent);
         }
 
         .bamboo-chat-msg.system {
-          color: var(--warning);
+          color: var(--bamboo-warning);
           font-style: italic;
           align-self: center;
           background: rgba(255, 169, 77, 0.05);
@@ -427,10 +514,10 @@ function injectCustomStyles() {
         }
 
         body.bamboo-hide-native-chat button[aria-label="open chat"] {
-          border: 1px solid var(--glass-border) !important;
-          background-color: var(--glass-bg) !important;
-          backdrop-filter: blur(var(--glass-blur)) !important;
-          -webkit-backdrop-filter: blur(var(--glass-blur)) !important;
+          border: 1px solid var(--bamboo-hud-border) !important;
+          background-color: var(--bamboo-hud-bg) !important;
+          backdrop-filter: blur(var(--bamboo-hud-blur)) !important;
+          -webkit-backdrop-filter: blur(var(--bamboo-hud-blur)) !important;
           border-radius: 50% !important;
           transition: background-color 0.2s ease, transform 0.1s ease !important;
         }
@@ -458,6 +545,15 @@ function injectCustomStyles() {
         }
 
         .bamboo-settings-container {
+          background-color: var(--bamboo-modal-bg);
+          border: 1px solid var(--bamboo-modal-border);
+          backdrop-filter: blur(var(--bamboo-modal-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-modal-blur));
+          border-radius: 12px;
+          box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.3);
+          color: var(--bamboo-text-primary);
+          font-family: "Montserrat", sans-serif;
+          
           padding: 20px;
           width: 450px;
           max-height: 85vh;
@@ -472,7 +568,7 @@ function injectCustomStyles() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          border-bottom: 1px solid var(--glass-border);
+          border-bottom: 1px solid var(--bamboo-modal-border);
           padding-bottom: 10px;
           font-size: 1.1rem;
           font-weight: 600;
@@ -500,7 +596,7 @@ function injectCustomStyles() {
         .bamboo-settings-category-title {
           font-size: 12px;
           font-weight: 700;
-          color: var(--accent);
+          color: var(--bamboo-accent);
           text-transform: uppercase;
           letter-spacing: 0.8px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -509,24 +605,146 @@ function injectCustomStyles() {
         }
 
         .bamboo-settings-footer {
-          border-top: 1px solid var(--glass-border);
+          border-top: 1px solid var(--bamboo-modal-border);
           padding-top: 12px;
           margin-top: 4px;
           text-align: center;
           font-size: 12px;
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           display: flex;
           flex-direction: column;
           gap: 4px;
         }
 
+        .custom-select {
+          position: relative;
+          width: 100%;
+          font-family: inherit;
+          font-size: 13px;
+          user-select: none;
+        }
+
+        .select-selected {
+          background-color: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--bamboo-modal-border);
+          border-radius: 6px;
+          padding: 6px 12px;
+          cursor: pointer;
+          color: var(--bamboo-text-primary);
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          transition: background-color 0.2s;
+        }
+
+        .select-selected:hover {
+          background-color: rgba(255, 255, 255, 0.1);
+        }
+
+        .select-items {
+          position: absolute;
+          background-color: rgba(20, 20, 20, 0.95);
+          backdrop-filter: blur(10px);
+          border: 1px solid var(--bamboo-modal-border);
+          border-radius: 6px;
+          left: 0;
+          right: 0;
+          z-index: 99999;
+          max-height: 180px;
+          overflow-y: auto;
+          display: none;
+          box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+          margin-top: 4px;
+        }
+
+        .custom-select.active .select-items {
+          display: block;
+        }
+
+        .select-items div {
+          color: var(--bamboo-text-primary);
+          padding: 8px 12px;
+          cursor: pointer;
+          transition: background-color 0.2s, color 0.2s;
+        }
+
+        .select-items div:hover {
+          background-color: var(--bamboo-accent);
+          color: #000;
+        }
+
+        .bamboo-input {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--bamboo-modal-border);
+          border-radius: 6px;
+          padding: 6px 10px;
+          color: #fff;
+          font-family: inherit;
+          font-size: 12px;
+          outline: none;
+          box-sizing: border-box;
+          transition: border-color 0.2s;
+        }
+
+        .bamboo-input:focus {
+          border-color: var(--bamboo-accent);
+        }
+
+        .bamboo-btn {
+          background: rgba(126, 184, 255, 0.12);
+          border: 1px solid var(--bamboo-modal-border);
+          color: var(--bamboo-accent);
+          border-radius: 6px;
+          padding: 6px 12px;
+          cursor: pointer;
+          font-weight: 600;
+          font-size: 12px;
+          font-family: inherit;
+          transition: background-color 0.2s, transform 0.1s;
+        }
+
+        .bamboo-btn:hover {
+          background: rgba(126, 184, 255, 0.25);
+        }
+
+        .bamboo-btn:active {
+          transform: scale(0.95);
+        }
+
+        .bamboo-range-slider {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 100%;
+          height: 6px;
+          border-radius: 3px;
+          background: rgba(255, 255, 255, 0.15);
+          outline: none;
+          cursor: pointer;
+          transition: background-color 0.2s;
+        }
+
+        .bamboo-range-slider::-webkit-slider-thumb {
+          -webkit-appearance: none;
+          appearance: none;
+          width: 14px;
+          height: 14px;
+          border-radius: 50%;
+          background: var(--bamboo-accent);
+          cursor: pointer;
+          transition: transform 0.1s;
+        }
+
+        .bamboo-range-slider::-webkit-slider-thumb:hover {
+          transform: scale(1.2);
+        }
+
         .bamboo-reload-notice {
           background-color: rgba(255, 169, 77, 0.1);
-          border: 1px solid var(--warning);
+          border: 1px solid var(--bamboo-warning);
           border-radius: 8px;
           padding: 8px 12px;
           font-size: 12px;
-          color: var(--warning);
+          color: var(--bamboo-warning);
           text-align: center;
           margin-top: 10px;
           display: none;
@@ -534,11 +752,11 @@ function injectCustomStyles() {
 
         .bamboo-storage-error {
           background-color: rgba(255, 107, 107, 0.12);
-          border: 1px solid var(--error);
+          border: 1px solid var(--bamboo-error);
           border-radius: 8px;
           padding: 8px 12px;
           font-size: 12px;
-          color: var(--error);
+          color: var(--bamboo-error);
           text-align: center;
           margin-top: 10px;
           line-height: 1.3;
@@ -547,7 +765,7 @@ function injectCustomStyles() {
         .bamboo-version-badge {
           display: inline-block;
           background: rgba(126, 184, 255, 0.12);
-          color: var(--accent);
+          color: var(--bamboo-accent);
           padding: 2px 6px;
           border-radius: 4px;
           font-weight: 700;
@@ -589,7 +807,7 @@ function injectCustomStyles() {
         }
 
         .bamboo-news-title {
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           font-size: 12px;
           font-weight: 500;
           white-space: nowrap;
@@ -604,7 +822,7 @@ function injectCustomStyles() {
           transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
           line-height: 1.4;
           background: rgba(0, 0, 0, 0.15);
-          color: var(--text-primary);
+          color: var(--bamboo-text-primary);
         }
 
         .bamboo-news-body.open {
@@ -619,7 +837,7 @@ function injectCustomStyles() {
 
         .bamboo-badge-current {
           background: rgba(126, 184, 255, 0.15);
-          color: var(--accent);
+          color: var(--bamboo-accent);
           padding: 1.5px 5px;
           border-radius: 3px;
           font-weight: 700;
@@ -627,17 +845,17 @@ function injectCustomStyles() {
 
         .bamboo-badge-new {
           background: rgba(255, 169, 77, 0.15);
-          color: var(--warning);
+          color: var(--bamboo-warning);
           padding: 1.5px 5px;
           border-radius: 3px;
           font-weight: 700;
         }
 
         .bamboo-close-btn {
-          background: none; border: none; color: var(--text-primary);
+          background: none; border: none; color: var(--bamboo-text-primary);
           font-size: 1.5rem; cursor: pointer; transition: color 0.2s;
         }
-        .bamboo-close-btn:hover { color: var(--error); }
+        .bamboo-close-btn:hover { color: var(--bamboo-error); }
 
         .bamboo-setting-row {
           display: flex;
@@ -649,7 +867,7 @@ function injectCustomStyles() {
         .bamboo-checkbox {
           width: 20px; height: 20px;
           appearance: none;
-          border: 2px solid var(--glass-border);
+          border: 2px solid var(--bamboo-modal-border);
           border-radius: 4px;
           background-color: transparent;
           cursor: pointer;
@@ -657,8 +875,8 @@ function injectCustomStyles() {
           transition: background-color 0.2s, border-color 0.2s;
         }
         .bamboo-checkbox:checked {
-          background-color: var(--accent);
-          border-color: var(--accent);
+          background-color: var(--bamboo-accent);
+          border-color: var(--bamboo-accent);
         }
         .bamboo-checkbox:checked::after {
           content: "✔";
@@ -709,6 +927,40 @@ async function setupSingleCallback(
   }
   logger.warn(
     `[CWG Mod] Element "${selector}" not found after ${maxAttempts} attempts.`,
+  );
+}
+
+/**
+ * Monitors a target element matching the selector for mutations once it appears in the DOM.
+ * Incorporates debounce logic to prevent excessive callback execution.
+ *
+ * @param {string} selector - CSS selector of the element to watch.
+ * @param {Function} callback - Function to execute on mutation.
+ * @param {MutationObserverInit} [options] - Options configuration for the MutationObserver.
+ * @param {number} [maxAttempts=20] - Max polling attempts before giving up.
+ * @param {number} [delay=500] - Polling interval in milliseconds.
+ * @param {number} [debounceTime=100] - Debounce delay for callback triggers.
+ */
+async function setupMutationObserver(
+  selector,
+  callback,
+  options = { attributes: true, attributeFilter: ["style"] },
+  maxAttempts = 20,
+  delay = 500,
+  debounceTime = 100,
+) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const element = document.querySelector(selector);
+    if (element) {
+      const observer = new MutationObserver(debounce(callback, debounceTime));
+      observer.observe(element, options);
+      callback();
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  logger.warn(
+    `[CWG-Bamboo] Element with selector "${selector}" not found for mutation setup after ${maxAttempts} attempts.`,
   );
 }
 
@@ -808,8 +1060,625 @@ async function loadNewsContent(version) {
 }
 
 // ====================================================================================================================
+//   . . . CUSTOM SOUNDS & DROPDOWNS CONTROLLERS . . .
+// ====================================================================================================================
+
+/**
+ * Loads custom user sounds from storage with a fallback to localStorage.
+ * Keeps data isolated from core settings to prevent corruption.
+ *
+ * @returns {Array<{id: string, name: string, url: string}>} Array of user-defined sounds.
+ */
+function loadCustomSounds() {
+  try {
+    let stored = null;
+    if (typeof GM_getValue !== "undefined") {
+      stored = GM_getValue("bamboo_customSounds", null);
+    } else {
+      const localStored = localStorage.getItem("bamboo_customSounds");
+      if (localStored) {
+        stored = JSON.parse(localStored);
+      }
+    }
+
+    const sounds = Array.isArray(stored) ? stored : [];
+    soundManager.registerSound(sounds);
+  } catch (err) {
+    logger.error("[CWG-Bamboo] Failed to load custom sounds:", err);
+  }
+}
+
+/**
+ * Saves the custom user sounds array back to persistent storage.
+ *
+ * @param {Array<{id: string, name: string, url: string}>} sounds - The custom sounds array.
+ */
+function saveCustomSounds(sounds) {
+  try {
+    if (typeof GM_setValue !== "undefined") {
+      GM_setValue("bamboo_customSounds", sounds);
+    } else {
+      localStorage.setItem("bamboo_customSounds", JSON.stringify(sounds));
+    }
+  } catch (err) {
+    logger.error("[CWG-Bamboo] Failed to save custom sounds:", err);
+  }
+}
+
+/**
+ * Appends a unified "Test Sound" button to the specified container.
+ *
+ * @param {string} containerId - DOM ID of the container element.
+ * @param {string} settingsKeyForSound - The setting key holding the active sound ID.
+ * @param {string} settingsKeyForVolume - The setting key holding the volume value (1-10).
+ */
+function addSoundTestButton(
+  containerId,
+  settingsKeyForSound,
+  settingsKeyForVolume,
+) {
+  const container = document.getElementById(containerId);
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  const testButton = document.createElement("button");
+  testButton.className = "bamboo-btn";
+  testButton.style.padding = "4px 8px";
+  testButton.textContent = "Тест звука";
+
+  testButton.addEventListener("click", (e) => {
+    e.preventDefault();
+    const selectedSoundId = bambooSettings[settingsKeyForSound];
+    const volume = bambooSettings[settingsKeyForVolume] || 5;
+    if (selectedSoundId) {
+      soundManager.playSound(selectedSoundId, volume).catch(() => {});
+    }
+  });
+
+  container.appendChild(testButton);
+}
+
+/**
+ * Builds and initializes a custom select element. I really like to steal my own work.
+ *
+ * @param {string} selectId - DOM ID of the select container.
+ * @param {Array<{id: string, name: string}>} options - Dropdown items.
+ */
+function createCustomSelect(selectId, options) {
+  const selectContainer = document.getElementById(selectId);
+  if (!selectContainer) return;
+  const selectedElement = selectContainer.querySelector(".select-selected");
+  const optionsContainer = selectContainer.querySelector(".select-items");
+  if (!selectedElement || !optionsContainer) return;
+
+  if (bambooSettings && bambooSettings[selectId] !== undefined) {
+    const selectedOption = options.find(
+      (option) => option.id === bambooSettings[selectId],
+    );
+    if (selectedOption) {
+      selectedElement.textContent = selectedOption.name;
+    }
+  }
+
+  optionsContainer.innerHTML = "";
+
+  options.forEach((option) => {
+    const optionElement = document.createElement("div");
+    optionElement.textContent = option.name;
+    optionElement.dataset.id = option.id;
+
+    optionElement.addEventListener("click", () => {
+      selectedElement.textContent = option.name;
+      bambooSettings[selectId] = option.id;
+      saveSettings();
+      selectContainer.classList.remove("active");
+      selectContainer.dispatchEvent(new Event("change"));
+    });
+
+    optionsContainer.appendChild(optionElement);
+  });
+
+  if (!selectContainer.dataset.listenerAttached) {
+    selectedElement.addEventListener("click", () => {
+      selectContainer.classList.toggle("active");
+    });
+    selectContainer.dataset.listenerAttached = "true";
+  }
+}
+
+/**
+ * Re-renders user's custom sounds list inside the modal.
+ */
+function renderCustomSoundsList() {
+  const listEl = document.getElementById("custom-sounds-list");
+  if (!listEl) return;
+  listEl.innerHTML = "";
+
+  let stored = null;
+  if (typeof GM_getValue !== "undefined") {
+    stored = GM_getValue("bamboo_customSounds", null);
+  } else {
+    const localStored = localStorage.getItem("bamboo_customSounds");
+    if (localStored) {
+      stored = JSON.parse(localStored);
+    }
+  }
+  const sounds = Array.isArray(stored) ? stored : [];
+
+  if (sounds.length === 0) {
+    listEl.innerHTML =
+      "<p style='opacity: 0.5; text-align: center; margin: 0; font-size: 11px;'>Нет добавленных звуков.</p>";
+    return;
+  }
+
+  sounds.forEach((sound) => {
+    const itemEl = document.createElement("div");
+    itemEl.style.cssText =
+      "display: flex; justify-content: space-between; align-items: center; padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: 6px; border: 1px solid rgba(255,255,255,0.08); font-size: 11px; gap: 8px;";
+
+    const meta = document.createElement("div");
+    meta.style.cssText =
+      "display: flex; flex-direction: column; overflow: hidden; margin-right: 10px; flex: 1;";
+
+    const nameEl = document.createElement("span");
+    nameEl.style.cssText = "font-weight: bold;";
+    nameEl.textContent = sound.name;
+
+    const urlEl = document.createElement("span");
+    urlEl.style.cssText =
+      "font-size: 10px; opacity: 0.5; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;";
+    urlEl.textContent = sound.url;
+
+    const actions = document.createElement("div");
+    actions.style.cssText = "display: flex; gap: 4px;";
+
+    const playBtn = document.createElement("button");
+    playBtn.className = "bamboo-btn";
+    playBtn.style.padding = "2px 6px";
+    playBtn.textContent = "▶";
+    playBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      soundManager.playSound(sound.id, 5).catch(() => {});
+    });
+
+    const deleteBtn = document.createElement("button");
+    deleteBtn.className = "bamboo-btn";
+    deleteBtn.style.cssText =
+      "padding: 2px 6px; border-color: var(--error); color: var(--error); background: rgba(255,107,107,0.1);";
+    deleteBtn.textContent = "✖";
+    deleteBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      deleteCustomSound(sound.id);
+    });
+
+    meta.append(nameEl, urlEl);
+    actions.append(playBtn, deleteBtn);
+    itemEl.append(meta, actions);
+
+    listEl.appendChild(itemEl);
+  });
+}
+
+/**
+ * Rebuilds all sound-related custom select dropdowns dynamically.
+ * Zero hardcode. Processes any select ending with "Sound".
+ */
+function updateAllSoundSelects() {
+  const currentSounds = soundManager.getSoundList();
+
+  document.querySelectorAll(".custom-select").forEach((selectContainer) => {
+    const selectId = selectContainer.id;
+    if (selectId && selectId.endsWith("Sound")) {
+      createCustomSelect(selectId, currentSounds);
+
+      const baseName = selectId.replace("Sound", "");
+      const testContainerId = `${baseName}SoundContainer`;
+      const volKey = `${baseName}Volume`;
+
+      addSoundTestButton(testContainerId, selectId, volKey);
+    }
+  });
+}
+
+/**
+ * Deletes custom sound.
+ *
+ * @param {string} id - The sound ID.
+ */
+function deleteCustomSound(id) {
+  if (!confirm("Вы уверены, что хотите удалить этот звук?")) return;
+
+  let stored = null;
+  if (typeof GM_getValue !== "undefined") {
+    stored = GM_getValue("bamboo_customSounds", null);
+  } else {
+    const localStored = localStorage.getItem("bamboo_customSounds");
+    if (localStored) {
+      stored = JSON.parse(localStored);
+    }
+  }
+  let sounds = Array.isArray(stored) ? stored : [];
+  sounds = sounds.filter((s) => s.id !== id);
+
+  saveCustomSounds(sounds);
+
+  soundManager.unregisterSound(id);
+  renderCustomSoundsList();
+  updateAllSoundSelects();
+}
+
+// ====================================================================================================================
+//   . . . SOUND MANAGER . . .
+// ====================================================================================================================
+
+/**
+ * @typedef {Object} SoundDefinition
+ * @property {string} id - Unique identifier for the sound.
+ * @property {string} name - Display name for the UI.
+ * @property {string} url - Source URL of the audio file.
+ * @property {boolean} isCustom - Indicates if the sound is user-defined.
+ * @property {HTMLAudioElement|null} audio - Cached Audio instance.
+ */
+
+function createSoundManager() {
+  /** @type {Map<string, SoundDefinition>} */
+  const soundRegistry = new Map();
+  let isUserInteracted = false;
+  let pendingSounds = [];
+
+  /**
+   * Retrieves or initializes an Audio instance for the given sound ID.
+   *
+   * @param {string} id - The sound identifier.
+   * @returns {HTMLAudioElement|null} The cached Audio instance.
+   */
+  function getAudioInstance(id) {
+    const soundDef = soundRegistry.get(id);
+    if (!soundDef) return null;
+
+    if (!soundDef.audio) {
+      soundDef.audio = new Audio(soundDef.url);
+    }
+    return soundDef.audio;
+  }
+
+  /**
+   * Registers sound files in the manager. Supports both a single sound definition
+   * and an array of sound objects.
+   *
+   * @param {string|Array<Object>} idOrSounds - Unique identifier, or an array of sound objects.
+   * @param {string} [name] - Display name for the UI.
+   * @param {string} [url] - Source URL of the audio file.
+   * @param {boolean} [isCustom=false] - Indicates if the sound is user-defined.
+   */
+  function registerSound(idOrSounds, name, url, isCustom = false) {
+    if (Array.isArray(idOrSounds)) {
+      idOrSounds.forEach((sound) => {
+        if (sound && sound.id && sound.name && sound.url) {
+          soundRegistry.set(sound.id, {
+            id: sound.id,
+            name: sound.name,
+            url: sound.url,
+            isCustom: !!sound.isCustom,
+            audio: null,
+          });
+        }
+      });
+    } else if (typeof idOrSounds === "string") {
+      soundRegistry.set(idOrSounds, {
+        id: idOrSounds,
+        name: name || "",
+        url: url || "",
+        isCustom: !!isCustom,
+        audio: null,
+      });
+    }
+  }
+
+  /**
+   * Removes a sound from the registry by its ID.
+   *
+   * @param {string} id - The sound identifier to remove.
+   */
+  function unregisterSound(id) {
+    soundRegistry.delete(id);
+  }
+
+  /**
+   * Returns a formatted list of all registered sounds for UI dropdowns.
+   *
+   * @returns {Array<{id: string, name: string, isCustom: boolean}>} Array of registered sound definitions.
+   */
+  function getSoundList() {
+    return Array.from(soundRegistry.values()).map((def) => ({
+      id: def.id,
+      name: def.name,
+      isCustom: def.isCustom,
+    }));
+  }
+
+  /**
+   * Plays the sound with the given ID and volume. Handles browser autoplay policies.
+   *
+   * @param {string} id - The sound identifier.
+   * @param {number} volume - Volume level (0 to 10).
+   * @returns {Promise<void>} Resolves when audio play successfully starts.
+   */
+  function playSound(id, volume) {
+    return new Promise((resolve, reject) => {
+      const audio = getAudioInstance(id);
+      if (audio) {
+        audio.currentTime = 0;
+        audio.volume = Math.max(0, Math.min(1, volume / 10));
+
+        audio
+          .play()
+          .then(resolve)
+          .catch((error) => {
+            if (!isUserInteracted) {
+              logger.warn(
+                "[CWG-Bamboo] Audio blocked by autoplay policy. Waiting for user interaction.",
+              );
+              pendingSounds.push({ id, volume, resolve });
+            } else {
+              logger.warn(`[CWG-Bamboo] Failed to play sound ${id}:`, error);
+              reject(error);
+            }
+          });
+      } else {
+        reject(new Error(`[CWG-Bamboo] Sound with ID ${id} not found.`));
+      }
+    });
+  }
+
+  function playSoundNow(id, volume, resolve) {
+    const audio = getAudioInstance(id);
+    if (audio) {
+      audio.volume = Math.max(0, Math.min(1, volume / 10));
+      audio
+        .play()
+        .then(resolve)
+        .catch((error) => {
+          logger.error(
+            `[CWG-Bamboo] Failed to play pending sound ${id}:`,
+            error,
+          );
+          resolve();
+        });
+    }
+  }
+
+  function handleUserInteraction() {
+    isUserInteracted = true;
+
+    document.removeEventListener("mousedown", handleUserInteraction);
+    document.removeEventListener("touchstart", handleUserInteraction);
+    document.removeEventListener("keydown", handleUserInteraction);
+
+    pendingSounds.forEach(({ id, volume, resolve }) => {
+      playSoundNow(id, volume, resolve);
+    });
+    pendingSounds = [];
+  }
+
+  document.addEventListener("mousedown", handleUserInteraction);
+  document.addEventListener("touchstart", handleUserInteraction);
+  document.addEventListener("keydown", handleUserInteraction);
+
+  return {
+    registerSound,
+    unregisterSound,
+    getSoundList,
+    playSound,
+  };
+}
+
+const soundManager = createSoundManager();
+
+soundManager.registerSound([
+  {
+    id: "notificationSound1",
+    name: "Звук 1",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/notification_1.mp3",
+  },
+  {
+    id: "notificationSound2",
+    name: "Звук 2",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/notification_2.mp3",
+  },
+  {
+    id: "notificationSound3",
+    name: "Звук 3",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/notification_3.mp3",
+  },
+  {
+    id: "notificationBlockSound1",
+    name: "Блокирование",
+    url: "https://github.com/Ibirtem/CatWar/raw/main/sounds/block_1.mp3",
+  },
+]);
+
+// ====================================================================================================================
 //   . . . MODAL UI . . .
 // ====================================================================================================================
+
+/**
+ * Returns the inner HTML markup for the Settings Modal.
+ *
+ * @param {string} errorHTML - The error alert container HTML (empty if storage API is available).
+ * @returns {string} Fully structured HTML template.
+ */
+const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
+  <div class="glass-panel bamboo-settings-container">
+    <div class="bamboo-settings-header">
+      <span>🎋 Настройки Бамбука</span>
+      <button class="bamboo-close-btn" id="bamboo-close-btn">&times;</button>
+    </div>
+
+    ${errorHTML}
+    <div class="bamboo-reload-notice" id="cwg-bamboo-reload-notice">
+      ⏳ Для гарантированного применения изменений перезагрузите страницу.
+    </div>
+
+    <div class="bamboo-settings-content">
+      <!-- HUD Overlays -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Интерфейс (HUD)</div>
+
+        <div
+          class="bamboo-setting-row"
+          style="flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 6px;"
+        >
+          <span>Тема интерфейса</span>
+          <div class="custom-select" id="hudTheme" style="width: 100%;">
+            <div class="select-selected">Выберите тему</div>
+            <div class="select-items"></div>
+          </div>
+        </div>
+
+        <div class="bamboo-setting-row">
+          <span>Показывать время</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showTimeHUD"
+          />
+        </div>
+        <div class="bamboo-setting-row">
+          <span>Показывать дату</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showDateHUD"
+          />
+        </div>
+        <div class="bamboo-setting-row">
+          <span>Показывать локацию</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showLocationHUD"
+          />
+        </div>
+      </div>
+
+      <!-- Chat & Communication -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">
+          Общение и Взаимодействие
+        </div>
+        <div class="bamboo-setting-row">
+          <span>Улучшенный чат</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableBambooChat"
+          />
+        </div>
+      </div>
+
+      <!-- Sounds & Notifications -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Звуки и Уведомления</div>
+        <div
+          class="bamboo-setting-row"
+          style="flex-direction: column; align-items: flex-start; gap: 6px;"
+        >
+          <span>Уведомление События</span>
+          <div
+            style="display: flex; gap: 8px; width: 100%; align-items: center;"
+          >
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="enableEventNotification"
+              title="Включить звуковые уведомления о событиях"
+            />
+            <div
+              class="custom-select"
+              id="eventNotificationSound"
+              style="flex: 1;"
+            >
+              <div class="select-selected">Выберите звук</div>
+              <div class="select-items"></div>
+            </div>
+            <div
+              class="volume-control"
+              style="width: 110px; display: flex; align-items: center; gap: 6px;"
+            >
+              <span>🔊</span>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                class="bamboo-range-slider"
+                id="eventNotificationVolume"
+                data-setting="eventNotificationVolume"
+              />
+            </div>
+            <div id="eventNotificationSoundContainer"></div>
+          </div>
+        </div>
+
+        <!-- Add Custom Sound Form -->
+        <div
+          style="border-top: 1px solid rgba(255,255,255,0.08); padding-top: 10px; margin-top: 4px; display: flex; flex-direction: column; gap: 8px;"
+        >
+          <div
+            style="font-size: 11px; opacity: 0.7; font-weight: bold; text-transform: uppercase; letter-spacing: 0.5px;"
+          >
+            Добавить свой звук:
+          </div>
+          <div style="display: flex; gap: 6px;">
+            <input
+              type="text"
+              id="custom-sound-name"
+              placeholder="Название"
+              class="bamboo-input"
+              style="width: 100px;"
+            />
+            <input
+              type="text"
+              id="custom-sound-url"
+              placeholder="URL"
+              class="bamboo-input"
+              style="flex: 1;"
+            />
+            <button id="add-custom-sound-btn" class="bamboo-btn">＋</button>
+          </div>
+          <div
+            id="custom-sounds-list"
+            style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;"
+          ></div>
+        </div>
+      </div>
+
+      <!-- System, Logging & Debug -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Отладка и Разработка</div>
+        <div class="bamboo-setting-row">
+          <span>Логирование мода</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableLogging"
+          />
+        </div>
+        <div class="bamboo-setting-row">
+          <span>Логирование сети</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableNetworkLogging"
+          />
+        </div>
+      </div>
+    </div>
+
+    <div class="bamboo-settings-footer"></div>
+  </div>
+`;
 
 /**
  * Matches DOM inputs with active settings values on load.
@@ -855,6 +1724,19 @@ function bindSettingsListeners() {
         if (timeHud) timeHud.style.display = element.checked ? "flex" : "none";
       }
 
+      if (setting === "showDateHUD") {
+        const dateHud = document.getElementById("cwg-bamboo-date");
+        if (element.checked) {
+          if (dateHud) {
+            dateHud.style.display = "flex";
+          } else {
+            initDateHUD();
+          }
+        } else {
+          if (dateHud) dateHud.style.display = "none";
+        }
+      }
+
       if (setting === "showLocationHUD") {
         const locHud = document.getElementById("cwg-bamboo-location");
         if (element.checked) {
@@ -882,9 +1764,6 @@ function createSettingsModal() {
   overlay.className = "bamboo-modal-overlay";
   overlay.id = "cwg-bamboo-modal";
 
-  const scriptVersion =
-    typeof GM_info !== "undefined" ? GM_info.script.version : "v?.?.?";
-
   const hasGMSupport =
     typeof GM_getValue !== "undefined" && typeof GM_setValue !== "undefined";
 
@@ -892,95 +1771,127 @@ function createSettingsModal() {
     ? `<div class="bamboo-storage-error">⚠️ Tampermonkey API недоступно. Настройки будут сохранены локально для этого домена.</div>`
     : "";
 
-  overlay.innerHTML = /* HTML */ `
-    <div class="glass-panel bamboo-settings-container">
-      <div class="bamboo-settings-header">
-        <span>🎋 Настройки Бамбука</span>
-        <button class="bamboo-close-btn" id="bamboo-close-btn">&times;</button>
-      </div>
-
-      ${errorHTML}
-      <div class="bamboo-reload-notice" id="cwg-bamboo-reload-notice">
-        ⏳ Для гарантированного применения изменений перезагрузите страницу.
-      </div>
-
-      <div class="bamboo-settings-content">
-        <!-- HUD Overlays -->
-        <div class="bamboo-settings-category">
-          <div class="bamboo-settings-category-title">Интерфейс (HUD)</div>
-          <div class="bamboo-setting-row">
-            <span>Показывать время</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="showTimeHUD"
-            />
-          </div>
-          <div class="bamboo-setting-row">
-            <span>Показывать локацию</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="showLocationHUD"
-            />
-          </div>
-        </div>
-
-        <!-- Chat & Communication -->
-        <div class="bamboo-settings-category">
-          <div class="bamboo-settings-category-title">
-            Общение и Взаимодействие
-          </div>
-          <div class="bamboo-setting-row">
-            <span>Улучшенный чат</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="enableBambooChat"
-            />
-          </div>
-        </div>
-
-        <!-- System, Logging & Debug -->
-        <div class="bamboo-settings-category">
-          <div class="bamboo-settings-category-title">Отладка и Разработка</div>
-          <div class="bamboo-setting-row">
-            <span>Логирование мода</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="enableLogging"
-            />
-          </div>
-          <div class="bamboo-setting-row">
-            <span>Логирование сети</span>
-            <input
-              type="checkbox"
-              class="bamboo-checkbox"
-              data-setting="enableNetworkLogging"
-            />
-          </div>
-        </div>
-      </div>
-
-      <div class="bamboo-settings-footer"></div>
-    </div>
-  `;
-
+  overlay.innerHTML = getSettingsModalTemplate(errorHTML);
   document.body.appendChild(overlay);
 
   syncSettingsUI();
   bindSettingsListeners();
 
   renderFooterNews();
+  renderCustomSoundsList();
+  updateAllSoundSelects();
 
-  document.getElementById("bamboo-close-btn").addEventListener("click", () => {
+  createCustomSelect("hudTheme", [
+    { id: "glass", name: "Стеклянная (Glassmorphism)" },
+    { id: "native", name: "Нативная (Сайтовая)" },
+  ]);
+
+  initSettingsModalEvents(overlay);
+}
+
+/**
+ * Wires up event listeners for inputs, custom controls, and custom sound uploads
+ * inside the settings modal.
+ *
+ * @param {HTMLElement} overlay - The settings modal overlay element.
+ */
+function initSettingsModalEvents(overlay) {
+  overlay.querySelectorAll('input[type="range"]').forEach((slider) => {
+    slider.addEventListener("change", (e) => {
+      const val = Number(e.target.value);
+      const setting = e.target.dataset.setting;
+      bambooSettings[setting] = val;
+      saveSettings();
+    });
+  });
+
+  const addBtn = overlay.querySelector("#add-custom-sound-btn");
+  if (addBtn) {
+    addBtn.addEventListener("click", (e) => {
+      e.preventDefault();
+      handleCustomSoundUpload(overlay);
+    });
+  }
+
+  overlay.querySelector("#bamboo-close-btn").addEventListener("click", () => {
     overlay.classList.remove("active");
   });
 
   overlay.addEventListener("click", (e) => {
-    if (e.target === overlay) overlay.classList.remove("active");
+    if (e.target === overlay) {
+      overlay.classList.remove("active");
+    }
   });
+}
+
+/**
+ * Handles parsing, validating, and saving a new custom sound from modal input fields.
+ *
+ * @param {HTMLElement} overlay - The settings modal overlay element.
+ */
+function handleCustomSoundUpload(overlay) {
+  const nameInput = overlay.querySelector("#custom-sound-name");
+  const urlInput = overlay.querySelector("#custom-sound-url");
+  const name = nameInput.value.trim();
+  const url = urlInput.value.trim();
+
+  if (!name || !url) {
+    alert("Пожалуйста, заполните оба поля (Название и URL).");
+    return;
+  }
+
+  const id =
+    "customSound_" +
+    Date.now() +
+    "_" +
+    Math.random().toString(36).substring(2, 7);
+  const newSound = { id, name, url };
+
+  let stored = null;
+  if (typeof GM_getValue !== "undefined") {
+    stored = GM_getValue("bamboo_customSounds", null);
+  } else {
+    const localStored = localStorage.getItem("bamboo_customSounds");
+    if (localStored) {
+      stored = JSON.parse(localStored);
+    }
+  }
+  const sounds = Array.isArray(stored) ? stored : [];
+  sounds.push(newSound);
+
+  saveCustomSounds(sounds);
+
+  soundManager.registerSound(id, name, url, true);
+
+  nameInput.value = "";
+  urlInput.value = "";
+
+  renderCustomSoundsList();
+  updateAllSoundSelects();
+}
+
+/**
+ * Compares two version strings (e.g., "v1.46.0-06.26" vs "v1.0.0-06.26").
+ * Returns 1 if v1 > v2, -1 if v1 < v2, and 0 if equal.
+ *
+ * @param {string} v1 - First version string.
+ * @param {string} v2 - Second version string.
+ * @returns {number} Comparison result.
+ */
+function compareVersions(v1, v2) {
+  if (typeof v1 !== "string" || typeof v2 !== "string") return 0;
+
+  const clean = (v) => v.replace(/^v/, "").split("-")[0].split(".").map(Number);
+  const p1 = clean(v1);
+  const p2 = clean(v2);
+
+  for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+    const num1 = p1[i] || 0;
+    const num2 = p2[i] || 0;
+    if (num1 > num2) return 1;
+    if (num1 < num2) return -1;
+  }
+  return 0;
 }
 
 /**
@@ -1016,11 +1927,18 @@ async function renderFooterNews() {
     return;
   }
 
-  const isLatest = manifest.latest === scriptVersion;
+  const verComparison = compareVersions(scriptVersion, manifest.latest);
+  const isLatest = verComparison === 0;
+  const isLocalOlder = verComparison === -1;
+
   if (statusElement) {
-    statusElement.innerHTML = isLatest
-      ? `<span style="color: #a9e08f;">● Актуальная</span>`
-      : `<span style="color: var(--warning); font-weight: 700;">● Обновление: ${manifest.latest}</span>`;
+    if (verComparison === 1) {
+      statusElement.innerHTML = `<span style="color: #7eb8ff;">● Вы что, тестировщик или разраб?</span>`;
+    } else if (isLatest) {
+      statusElement.innerHTML = `<span style="color: #a9e08f;">● Актуальная</span>`;
+    } else {
+      statusElement.innerHTML = `<span style="color: var(--warning); font-weight: 700;">● Обновление: ${manifest.latest}</span>`;
+    }
   }
 
   if (listElement && Array.isArray(manifest.updates)) {
@@ -1227,6 +2145,54 @@ function formatGameTime(rawDate, vTime) {
 }
 
 /**
+ * Safely formats the game date into a readable string (e.g., "01.08.3").
+ * Calculates the current season based on the in-game moon (month).
+ *
+ * @param {any} rawDate - Raw game date object from getDate().
+ * @param {any} vTime - Raw virtual time object from getVirtualTime().
+ * @returns {string} Formatted date string or fallback text.
+ */
+function formatGameDate(rawDate, vTime) {
+  let year, moon, date;
+
+  if (rawDate && typeof rawDate.year === "number") {
+    year = rawDate.year;
+    moon = rawDate.moon;
+    date = rawDate.date;
+  } else if (
+    rawDate &&
+    Array.isArray(rawDate.value) &&
+    rawDate.value.length >= 5
+  ) {
+    year = rawDate.value[0];
+    moon = rawDate.value[1];
+    date = rawDate.value[2];
+  } else if (
+    vTime &&
+    vTime.virtualDate &&
+    Array.isArray(vTime.virtualDate.value)
+  ) {
+    year = vTime.virtualDate.value[0];
+    moon = vTime.virtualDate.value[1];
+    date = vTime.virtualDate.value[2];
+  } else {
+    return "📅 Sync...";
+  }
+
+  let emoji = "📅";
+  if (moon === 11 || moon === 0 || moon === 1) emoji = "❄️";
+  else if (moon >= 2 && moon <= 4) emoji = "🌸";
+  else if (moon >= 5 && moon <= 7) emoji = "☀️";
+  else if (moon >= 8 && moon <= 10) emoji = "🍁";
+
+  const formattedDate = String(date + 1).padStart(2, "0");
+  const formattedMoon = String(moon + 1).padStart(2, "0");
+  const formattedYear = String(year + 1);
+
+  return `${emoji} ${formattedDate}.${formattedMoon}.${formattedYear}`;
+}
+
+/**
  * Injects the custom time display into the game's top-right HUD.
  * Connects to the unsafeWindow API to pull real-time game data gracefully.
  */
@@ -1256,7 +2222,12 @@ function initTimeHUD() {
     const gameWindow =
       typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
-    setInterval(() => {
+    const intervalId = setInterval(() => {
+      if (!timeElement.isConnected) {
+        clearInterval(intervalId);
+        return;
+      }
+
       try {
         if (gameWindow.CWGPlayground) {
           const rawDate =
@@ -1278,25 +2249,98 @@ function initTimeHUD() {
 }
 
 /**
- * Resolves the localized name of the current area from hidden native DOM structures.
- * Uses a safe fallback approach to prevent failures if class selectors change.
- *
- * @returns {string|null} The trimmed area name, or null if not resolved.
+ * Injects the custom date display into the game's top-right HUD.
  */
-function getNativeLocationText() {
+function initDateHUD() {
+  if (!bambooSettings.showDateHUD) return;
+
+  const targetSelector = ".MuiStack-root.css-1byqyzy";
+  setupSingleCallback(targetSelector, (targetContainer) => {
+    if (document.getElementById("cwg-bamboo-date")) return;
+
+    const dateElement = document.createElement("div");
+    dateElement.className = "glass-panel glass-hud-item";
+    dateElement.id = "cwg-bamboo-date";
+    dateElement.innerText = "📅 Sync...";
+
+    const timeElement = document.getElementById("cwg-bamboo-time");
+    if (timeElement) {
+      targetContainer.insertBefore(dateElement, timeElement);
+    } else {
+      targetContainer.appendChild(dateElement);
+    }
+
+    const gameWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+
+    const intervalId = setInterval(() => {
+      if (!dateElement.isConnected) {
+        clearInterval(intervalId);
+        return;
+      }
+
+      try {
+        if (gameWindow.CWGPlayground) {
+          const rawDate =
+            typeof gameWindow.CWGPlayground.getDate === "function"
+              ? gameWindow.CWGPlayground.getDate()
+              : null;
+          const vTime =
+            typeof gameWindow.CWGPlayground.getVirtualTime === "function"
+              ? gameWindow.CWGPlayground.getVirtualTime()
+              : null;
+
+          dateElement.innerText = formatGameDate(rawDate, vTime);
+        }
+      } catch (err) {
+        dateElement.innerText = "⚠️ Err";
+      }
+    }, 1000);
+  });
+}
+
+/**
+ * Resolves the localized name and extra info of the current area from hidden native DOM structures.
+ *
+ * @returns {{text: string, extraInfo: string|null}|null} Location data object, or null if not resolved.
+ */
+function getNativeLocationData() {
   const parent =
     document.getElementById("bamboo-native-bubble-stack") ||
     tagNativeLocationStack();
+
   if (parent) {
     const innerLocationStack = parent.querySelector(".MuiStack-root");
     if (innerLocationStack) {
       const span = innerLocationStack.querySelector("span");
+      const extraBox = innerLocationStack.querySelector("div[aria-label]");
+
       if (span) {
-        return span.textContent.trim();
+        return {
+          text: span.textContent.trim(),
+          extraInfo: extraBox
+            ? extraBox.getAttribute("aria-label").trim()
+            : null,
+        };
       }
     }
   }
   return null;
+}
+
+/**
+ * Maps native location extra info to a corresponding emoji.
+ *
+ * @param {string|null} extraInfo - The aria-label text from the location.
+ * @returns {string} The matched emoji or default pin.
+ */
+function getLocationEmoji(extraInfo) {
+  if (!extraInfo) return "-";
+
+  const info = extraInfo.toLowerCase();
+  if (info.includes("бабочк")) return "🦋";
+
+  return "✨";
 }
 
 /**
@@ -1324,15 +2368,104 @@ function initLocationHUD() {
 
     document.body.classList.add("bamboo-hide-native-location");
 
-    setInterval(() => {
+    const intervalId = setInterval(() => {
+      if (!locElement.isConnected) {
+        clearInterval(intervalId);
+        return;
+      }
+
       try {
-        const text = getNativeLocationText();
-        locElement.innerText = text ? `📍 ${text}` : "📍 Sync...";
+        const data = getNativeLocationData();
+
+        if (data && data.text) {
+          const emoji = getLocationEmoji(data.extraInfo);
+          locElement.innerText = `${emoji} ${data.text}`;
+
+          if (data.extraInfo) {
+            locElement.title = data.extraInfo;
+            locElement.style.cursor = "help";
+          } else {
+            locElement.removeAttribute("title");
+            locElement.style.cursor = "default";
+          }
+        } else {
+          locElement.innerText = "📍 Sync...";
+          locElement.removeAttribute("title");
+          locElement.style.cursor = "default";
+        }
       } catch (err) {
         locElement.innerText = "⚠️ Err";
       }
     }, 1000);
   });
+}
+
+/**
+ * Triggers the user-defined audio notification for event updates.
+ */
+function triggerEventSoundNotification() {
+  if (!bambooSettings.enableEventNotification) return;
+
+  const soundId = bambooSettings.eventNotificationSound;
+  const volume = bambooSettings.eventNotificationVolume || 5;
+
+  if (soundId) {
+    soundManager
+      .playSound(soundId, volume)
+      .then(() => {
+        logger.log(
+          "[CWG-Bamboo] Played event notification sound successfully.",
+        );
+      })
+      .catch((err) => {
+        logger.error(
+          "[CWG-Bamboo] Failed to play event notification sound:",
+          err,
+        );
+      });
+  }
+}
+
+/**
+ * Initializes the dynamic event notification observer using setupMutationObserver.
+ * Leverages the `:has()` pseudo-class to target the parent container safely.
+ */
+function initEventNotificationObserver() {
+  const parentSelector = 'div:has(> button[aria-label="open events"])';
+  let isEventBadgeActive = false;
+
+  const handleEventBadgeMutation = () => {
+    const badge = document.querySelector(
+      'button[aria-label="open events"] ~ div',
+    );
+    const isVisible =
+      !!badge &&
+      window.getComputedStyle(badge).display !== "none" &&
+      window.getComputedStyle(badge).visibility !== "hidden";
+
+    if (isVisible) {
+      if (!isEventBadgeActive) {
+        isEventBadgeActive = true;
+        triggerEventSoundNotification();
+      }
+    } else {
+      isEventBadgeActive = false;
+    }
+  };
+
+  setupMutationObserver(
+    parentSelector,
+    handleEventBadgeMutation,
+    {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    },
+    20,
+    500,
+    150,
+  );
 }
 
 // ====================================================================================================================
@@ -1676,6 +2809,10 @@ function initPlayPage() {
     initTimeHUD();
   }
 
+  if (bambooSettings.showDateHUD) {
+    initDateHUD();
+  }
+
   if (bambooSettings.showLocationHUD) {
     initLocationHUD();
   }
@@ -1687,6 +2824,8 @@ function initPlayPage() {
   }
 
   initSettingsButton();
+
+  initEventNotificationObserver();
 }
 
 // ====================================================================================================================
@@ -1697,6 +2836,10 @@ async function initMod() {
   logger.log("[CWG Mod] Initializing...");
 
   loadSettings();
+  loadCustomSounds();
+
+  applyBambooTheme();
+
   injectCustomStyles();
   createSettingsModal();
 
