@@ -35,7 +35,6 @@ const bambooDefaultSettings = {
   enableLogging: false,
   enableNetworkLogging: false,
   bambooChatHeight: 450,
-  showLocationHUD: false,
 
   eventNotificationSound: "notificationSound1",
   eventNotificationVolume: 5,
@@ -1302,11 +1301,7 @@ function deleteCustomSound(id) {
   let sounds = Array.isArray(stored) ? stored : [];
   sounds = sounds.filter((s) => s.id !== id);
 
-  if (typeof GM_setValue !== "undefined") {
-    GM_setValue("bamboo_customSounds", sounds);
-  } else {
-    localStorage.setItem("bamboo_customSounds", JSON.stringify(sounds));
-  }
+  saveCustomSounds(sounds);
 
   soundManager.unregisterSound(id);
   renderCustomSoundsList();
@@ -1864,11 +1859,7 @@ function handleCustomSoundUpload(overlay) {
   const sounds = Array.isArray(stored) ? stored : [];
   sounds.push(newSound);
 
-  if (typeof GM_setValue !== "undefined") {
-    GM_setValue("bamboo_customSounds", sounds);
-  } else {
-    localStorage.setItem("bamboo_customSounds", JSON.stringify(sounds));
-  }
+  saveCustomSounds(sounds);
 
   soundManager.registerSound(id, name, url, true);
 
@@ -1888,6 +1879,8 @@ function handleCustomSoundUpload(overlay) {
  * @returns {number} Comparison result.
  */
 function compareVersions(v1, v2) {
+  if (typeof v1 !== "string" || typeof v2 !== "string") return 0;
+
   const clean = (v) => v.replace(/^v/, "").split("-")[0].split(".").map(Number);
   const p1 = clean(v1);
   const p2 = clean(v2);
@@ -2229,7 +2222,12 @@ function initTimeHUD() {
     const gameWindow =
       typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
-    setInterval(() => {
+    const intervalId = setInterval(() => {
+      if (!timeElement.isConnected) {
+        clearInterval(intervalId);
+        return;
+      }
+
       try {
         if (gameWindow.CWGPlayground) {
           const rawDate =
@@ -2275,7 +2273,12 @@ function initDateHUD() {
     const gameWindow =
       typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
 
-    setInterval(() => {
+    const intervalId = setInterval(() => {
+      if (!dateElement.isConnected) {
+        clearInterval(intervalId);
+        return;
+      }
+
       try {
         if (gameWindow.CWGPlayground) {
           const rawDate =
@@ -2365,7 +2368,12 @@ function initLocationHUD() {
 
     document.body.classList.add("bamboo-hide-native-location");
 
-    setInterval(() => {
+    const intervalId = setInterval(() => {
+      if (!locElement.isConnected) {
+        clearInterval(intervalId);
+        return;
+      }
+
       try {
         const data = getNativeLocationData();
 
@@ -2816,6 +2824,8 @@ function initPlayPage() {
   }
 
   initSettingsButton();
+
+  initEventNotificationObserver();
 }
 
 // ====================================================================================================================
