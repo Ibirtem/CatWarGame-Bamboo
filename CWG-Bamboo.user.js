@@ -8,8 +8,8 @@
 // @supportURL
 // @homepageURL
 // @match        *://playtest.cw-game.ru/play*
-// @updateURL
-// @downloadURL
+// @updateURL    https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
+// @downloadURL  https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @license      Apache-2.0
 // @iconURL
 // @run-at       document-start
