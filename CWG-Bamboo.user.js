@@ -2179,25 +2179,47 @@ function initTimeHUD() {
 }
 
 /**
- * Resolves the localized name of the current area from hidden native DOM structures.
- * Uses a safe fallback approach to prevent failures if class selectors change.
+ * Resolves the localized name and extra info of the current area from hidden native DOM structures.
  *
- * @returns {string|null} The trimmed area name, or null if not resolved.
+ * @returns {{text: string, extraInfo: string|null}|null} Location data object, or null if not resolved.
  */
-function getNativeLocationText() {
+function getNativeLocationData() {
   const parent =
     document.getElementById("bamboo-native-bubble-stack") ||
     tagNativeLocationStack();
+
   if (parent) {
     const innerLocationStack = parent.querySelector(".MuiStack-root");
     if (innerLocationStack) {
       const span = innerLocationStack.querySelector("span");
+      const extraBox = innerLocationStack.querySelector("div[aria-label]");
+
       if (span) {
-        return span.textContent.trim();
+        return {
+          text: span.textContent.trim(),
+          extraInfo: extraBox
+            ? extraBox.getAttribute("aria-label").trim()
+            : null,
+        };
       }
     }
   }
   return null;
+}
+
+/**
+ * Maps native location extra info to a corresponding emoji.
+ *
+ * @param {string|null} extraInfo - The aria-label text from the location.
+ * @returns {string} The matched emoji or default pin.
+ */
+function getLocationEmoji(extraInfo) {
+  if (!extraInfo) return "-";
+
+  const info = extraInfo.toLowerCase();
+  if (info.includes("бабочк")) return "🦋";
+
+  return "✨";
 }
 
 /**
@@ -2227,8 +2249,24 @@ function initLocationHUD() {
 
     setInterval(() => {
       try {
-        const text = getNativeLocationText();
-        locElement.innerText = text ? `📍 ${text}` : "📍 Sync...";
+        const data = getNativeLocationData();
+
+        if (data && data.text) {
+          const emoji = getLocationEmoji(data.extraInfo);
+          locElement.innerText = `${emoji} ${data.text}`;
+
+          if (data.extraInfo) {
+            locElement.title = data.extraInfo;
+            locElement.style.cursor = "help";
+          } else {
+            locElement.removeAttribute("title");
+            locElement.style.cursor = "default";
+          }
+        } else {
+          locElement.innerText = "📍 Sync...";
+          locElement.removeAttribute("title");
+          locElement.style.cursor = "default";
+        }
       } catch (err) {
         locElement.innerText = "⚠️ Err";
       }
