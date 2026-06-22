@@ -750,7 +750,7 @@ async function waitForPlayground() {
 // ====================================================================================================================
 
 const GITHUB_RAW_BASE =
-  "https://raw.githubusercontent.com/Ibirtem/CWG-Bamboo/main/news/";
+  "https://raw.githubusercontent.com/Ibirtem/CatWarGame-Bamboo/main/news/";
 const MANIFEST_URL = `${GITHUB_RAW_BASE}manifest.json`;
 
 let newsManifestCache = null;
