@@ -63,7 +63,7 @@ function loadSettings() {
 }
 
 /**
- * Saves current settings to Tampermonkey storage.
+ * Saves current settings to 'monkey storage.
  */
 function saveSettings() {
   try {
@@ -296,7 +296,7 @@ function injectCustomStyles() {
 
         #cwg-bamboo-chat {
           position: fixed;
-          bottom: 80px;
+          bottom: 70px;
           left: 20px;
           width: 420px;
           display: flex;
@@ -561,7 +561,7 @@ function injectCustomStyles() {
           gap: 6px;
           margin-top: 10px;
           text-align: left;
-          max-height: 180px;
+          max-height: 220px;
           overflow-y: auto;
           padding-right: 4px;
         }
@@ -605,6 +605,11 @@ function injectCustomStyles() {
           line-height: 1.4;
           background: rgba(0, 0, 0, 0.15);
           color: var(--text-primary);
+        }
+
+        .bamboo-news-body.open {
+          max-height: 160px;
+          overflow-y: auto;
         }
 
         .bamboo-news-body-content {
@@ -1069,11 +1074,10 @@ async function renderFooterNews() {
       const version = item.dataset.version;
 
       header.addEventListener("click", async () => {
-        const isOpen = body.style.maxHeight && body.style.maxHeight !== "0px";
+        const isOpen = body.classList.contains("open");
 
         listElement.querySelectorAll(".bamboo-news-body").forEach((b) => {
-          b.style.maxHeight = "0px";
-          b.style.overflowY = "hidden";
+          b.classList.remove("open");
         });
 
         if (!isOpen) {
@@ -1083,13 +1087,7 @@ async function renderFooterNews() {
             content.setAttribute("data-loaded", "true");
           }
 
-          const targetHeight = Math.min(130, content.scrollHeight + 16);
-          body.style.maxHeight = `${targetHeight}px`;
-
-          body.style.overflowY = "auto";
-        } else {
-          body.style.maxHeight = "0px";
-          body.style.overflowY = "hidden";
+          body.classList.add("open");
         }
       });
     });
