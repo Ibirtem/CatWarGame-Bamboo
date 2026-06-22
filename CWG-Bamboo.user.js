@@ -38,7 +38,7 @@ const bambooDefaultSettings = {
   eventNotificationVolume: 5,
   enableEventNotification: false,
 
-  hudTheme: "glass",
+  hudTheme: "native",
 };
 
 let bambooSettings = {};
@@ -235,16 +235,28 @@ const bambooDefaultThemes = {
     hudBorder: "rgba(255, 255, 255, 0.2)",
     hudBlur: "16px",
     hudText: "#ffffff",
+
+    hudUpperBg: "rgba(255, 255, 255, 0.05)",
+    hudUpperBorder: "rgba(255, 255, 255, 0.2)",
+    hudUpperBlur: "16px",
+    hudUpperText: "#ffffff",
+
     msgBg: "rgba(255, 255, 255, 0.06)",
     msgBorder: "rgba(255, 255, 255, 0.1)",
     msgSelfBg: "rgba(126, 184, 255, 0.12)",
     msgSelfBorder: "rgba(126, 184, 255, 0.25)",
   },
   native: {
-    hudBg: "rgba(20, 20, 20, 0.95)",
+    hudBg: "rgba(20, 20, 20, 0.35)",
     hudBorder: "rgba(255, 255, 255, 0.08)",
     hudBlur: "4px",
     hudText: "#ffffff",
+
+    hudUpperBg: "rgba(15, 15, 15, 0.75)",
+    hudUpperBorder: "rgba(255, 255, 255, 0.08)",
+    hudUpperBlur: "4px",
+    hudUpperText: "#ffffff",
+
     msgBg: "rgba(255, 255, 255, 0.04)",
     msgBorder: "rgba(255, 255, 255, 0.08)",
     msgSelfBg: "rgba(144, 202, 249, 0.08)",
@@ -254,11 +266,11 @@ const bambooDefaultThemes = {
 
 /**
  * Dynamically generates and injects CSS variables for the selected theme.
- * Leaves the settings modal "glass" by default, but allows overriding.
+ * Leaves the settings modal "native" by default, but allows overriding.
  */
 function applyBambooTheme() {
-  const themeId = bambooSettings.hudTheme || "glass";
-  const theme = bambooDefaultThemes[themeId] || bambooDefaultThemes["glass"];
+  const themeId = bambooSettings.hudTheme || "native";
+  const theme = bambooDefaultThemes[themeId] || bambooDefaultThemes["native"];
 
   const oldStyle = document.getElementById("cwg-bamboo-theme-vars");
   if (oldStyle) oldStyle.remove();
@@ -282,6 +294,11 @@ function applyBambooTheme() {
       --bamboo-hud-border: ${theme.hudBorder};
       --bamboo-hud-blur: ${theme.hudBlur};
       --bamboo-hud-text: ${theme.hudText};
+
+      --bamboo-hud-upper-bg: ${theme.hudUpperBg};
+      --bamboo-hud-upper-border: ${theme.hudUpperBorder};
+      --bamboo-hud-upper-blur: ${theme.hudUpperBlur};
+      --bamboo-hud-upper-text: ${theme.hudUpperText};
       
       --bamboo-msg-bg: ${theme.msgBg};
       --bamboo-msg-border: ${theme.msgBorder};
@@ -315,6 +332,12 @@ function injectCustomStyles() {
         }
         
         .glass-hud-item {
+          background-color: var(--bamboo-hud-upper-bg);
+          border-color: var(--bamboo-hud-upper-border);
+          backdrop-filter: blur(var(--bamboo-hud-upper-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-hud-upper-blur));
+          color: var(--bamboo-hud-upper-text);
+          
           display: flex;
           align-items: center;
           justify-content: center;
@@ -330,6 +353,10 @@ function injectCustomStyles() {
         }
 
         .bamboo-circular-btn {
+          background-color: var(--bamboo-hud-upper-bg);
+          border: 1px solid var(--bamboo-hud-upper-border);
+          color: var(--bamboo-hud-upper-text);
+          
           width: 34px;
           height: 34px;
           border-radius: 50%;
@@ -337,9 +364,6 @@ function injectCustomStyles() {
           align-items: center;
           justify-content: center;
           cursor: pointer;
-          border: 1px solid var(--bamboo-hud-border);
-          background-color: var(--bamboo-hud-bg);
-          color: var(--bamboo-hud-text);
           transition: background-color 0.2s ease, transform 0.1s ease;
           font-size: 18px;
           padding: 0;
@@ -1147,6 +1171,7 @@ function createCustomSelect(selectId, options) {
       bambooSettings[selectId] = option.id;
       saveSettings();
       selectContainer.classList.remove("active");
+      selectContainer.dispatchEvent(new Event("change"));
     });
 
     optionsContainer.appendChild(optionElement);
@@ -1502,6 +1527,18 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
       <!-- HUD Overlays -->
       <div class="bamboo-settings-category">
         <div class="bamboo-settings-category-title">Интерфейс (HUD)</div>
+
+        <div
+          class="bamboo-setting-row"
+          style="flex-direction: column; align-items: flex-start; gap: 6px; margin-bottom: 6px;"
+        >
+          <span>Тема интерфейса</span>
+          <div class="custom-select" id="hudTheme" style="width: 100%;">
+            <div class="select-selected">Выберите тему</div>
+            <div class="select-items"></div>
+          </div>
+        </div>
+
         <div class="bamboo-setting-row">
           <span>Показывать время</span>
           <input
@@ -1724,6 +1761,11 @@ function createSettingsModal() {
   renderFooterNews();
   renderCustomSoundsList();
   updateAllSoundSelects();
+
+  createCustomSelect("hudTheme", [
+    { id: "glass", name: "Стеклянная (Glassmorphism)" },
+    { id: "native", name: "Нативная (Сайтовая)" },
+  ]);
 
   initSettingsModalEvents(overlay);
 }
