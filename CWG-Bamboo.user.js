@@ -36,6 +36,7 @@ const bambooDefaultSettings = {
 
   eventNotificationSound: "notificationSound1",
   eventNotificationVolume: 5,
+  enableEventNotification: false,
 };
 
 let bambooSettings = {};
@@ -838,6 +839,40 @@ async function setupSingleCallback(
 }
 
 /**
+ * Monitors a target element matching the selector for mutations once it appears in the DOM.
+ * Incorporates debounce logic to prevent excessive callback execution.
+ *
+ * @param {string} selector - CSS selector of the element to watch.
+ * @param {Function} callback - Function to execute on mutation.
+ * @param {MutationObserverInit} [options] - Options configuration for the MutationObserver.
+ * @param {number} [maxAttempts=20] - Max polling attempts before giving up.
+ * @param {number} [delay=500] - Polling interval in milliseconds.
+ * @param {number} [debounceTime=100] - Debounce delay for callback triggers.
+ */
+async function setupMutationObserver(
+  selector,
+  callback,
+  options = { attributes: true, attributeFilter: ["style"] },
+  maxAttempts = 20,
+  delay = 500,
+  debounceTime = 100,
+) {
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const element = document.querySelector(selector);
+    if (element) {
+      const observer = new MutationObserver(debounce(callback, debounceTime));
+      observer.observe(element, options);
+      callback();
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, delay));
+  }
+  logger.warn(
+    `[CWG-Bamboo] Element with selector "${selector}" not found for mutation setup after ${maxAttempts} attempts.`,
+  );
+}
+
+/**
  * Waits for the global CWGPlayground API to be injected by the game.
  * Uses unsafeWindow to bypass Tampermonkey's sandbox isolation and access the real DOM.
  *
@@ -1445,6 +1480,12 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
           <div
             style="display: flex; gap: 8px; width: 100%; align-items: center;"
           >
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="enableEventNotification"
+              title="Включить звуковые уведомления о событиях"
+            />
             <div
               class="custom-select"
               id="eventNotificationSound"
@@ -2087,6 +2128,74 @@ function initLocationHUD() {
   });
 }
 
+/**
+ * Triggers the user-defined audio notification for event updates.
+ */
+function triggerEventSoundNotification() {
+  if (!bambooSettings.enableEventNotification) return;
+
+  const soundId = bambooSettings.eventNotificationSound;
+  const volume = bambooSettings.eventNotificationVolume || 5;
+
+  if (soundId) {
+    soundManager
+      .playSound(soundId, volume)
+      .then(() => {
+        logger.log(
+          "[CWG-Bamboo] Played event notification sound successfully.",
+        );
+      })
+      .catch((err) => {
+        logger.error(
+          "[CWG-Bamboo] Failed to play event notification sound:",
+          err,
+        );
+      });
+  }
+}
+
+/**
+ * Initializes the dynamic event notification observer using setupMutationObserver.
+ * Leverages the `:has()` pseudo-class to target the parent container safely.
+ */
+function initEventNotificationObserver() {
+  const parentSelector = 'div:has(> button[aria-label="open events"])';
+  let isEventBadgeActive = false;
+
+  const handleEventBadgeMutation = () => {
+    const badge = document.querySelector(
+      'button[aria-label="open events"] ~ div',
+    );
+    const isVisible =
+      !!badge &&
+      window.getComputedStyle(badge).display !== "none" &&
+      window.getComputedStyle(badge).visibility !== "hidden";
+
+    if (isVisible) {
+      if (!isEventBadgeActive) {
+        isEventBadgeActive = true;
+        triggerEventSoundNotification();
+      }
+    } else {
+      isEventBadgeActive = false;
+    }
+  };
+
+  setupMutationObserver(
+    parentSelector,
+    handleEventBadgeMutation,
+    {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ["class", "style"],
+    },
+    20,
+    500,
+    150,
+  );
+}
+
 // ====================================================================================================================
 //   . . . BAMBOO CHAT . . .
 // ====================================================================================================================
@@ -2459,6 +2568,8 @@ async function initMod() {
   logger.log("[CWG Mod] CWGPlayground API detected!");
 
   initPlayPage();
+
+  initEventNotificationObserver();
 }
 
 initMod();
