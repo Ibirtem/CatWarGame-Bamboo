@@ -37,6 +37,8 @@ const bambooDefaultSettings = {
   eventNotificationSound: "notificationSound1",
   eventNotificationVolume: 5,
   enableEventNotification: false,
+
+  hudTheme: "glass",
 };
 
 let bambooSettings = {};
@@ -224,6 +226,73 @@ const logger = {
 })();
 
 // ====================================================================================================================
+//   . . . THEME MANAGEMENT . . .
+// ====================================================================================================================
+
+const bambooDefaultThemes = {
+  glass: {
+    hudBg: "rgba(255, 255, 255, 0.05)",
+    hudBorder: "rgba(255, 255, 255, 0.2)",
+    hudBlur: "16px",
+    hudText: "#ffffff",
+    msgBg: "rgba(255, 255, 255, 0.06)",
+    msgBorder: "rgba(255, 255, 255, 0.1)",
+    msgSelfBg: "rgba(126, 184, 255, 0.12)",
+    msgSelfBorder: "rgba(126, 184, 255, 0.25)",
+  },
+  native: {
+    hudBg: "rgba(20, 20, 20, 0.95)",
+    hudBorder: "rgba(255, 255, 255, 0.08)",
+    hudBlur: "4px",
+    hudText: "#ffffff",
+    msgBg: "rgba(255, 255, 255, 0.04)",
+    msgBorder: "rgba(255, 255, 255, 0.08)",
+    msgSelfBg: "rgba(144, 202, 249, 0.08)",
+    msgSelfBorder: "rgba(144, 202, 249, 0.2)",
+  },
+};
+
+/**
+ * Dynamically generates and injects CSS variables for the selected theme.
+ * Leaves the settings modal "glass" by default, but allows overriding.
+ */
+function applyBambooTheme() {
+  const themeId = bambooSettings.hudTheme || "glass";
+  const theme = bambooDefaultThemes[themeId] || bambooDefaultThemes["glass"];
+
+  const oldStyle = document.getElementById("cwg-bamboo-theme-vars");
+  if (oldStyle) oldStyle.remove();
+
+  const style = document.createElement("style");
+  style.id = "cwg-bamboo-theme-vars";
+
+  style.textContent = /* CSS */ `
+    :root {
+      --bamboo-accent: #7eb8ff;
+      --bamboo-error: #ff6b6b;
+      --bamboo-warning: #ffa94d;
+      --bamboo-text-primary: #ffffff;
+      --bamboo-text-secondary: rgba(255, 255, 255, 0.6);
+
+      --bamboo-modal-bg: rgba(255, 255, 255, 0.05);
+      --bamboo-modal-border: rgba(255, 255, 255, 0.2);
+      --bamboo-modal-blur: 16px;
+
+      --bamboo-hud-bg: ${theme.hudBg};
+      --bamboo-hud-border: ${theme.hudBorder};
+      --bamboo-hud-blur: ${theme.hudBlur};
+      --bamboo-hud-text: ${theme.hudText};
+      
+      --bamboo-msg-bg: ${theme.msgBg};
+      --bamboo-msg-border: ${theme.msgBorder};
+      --bamboo-msg-self-bg: ${theme.msgSelfBg};
+      --bamboo-msg-self-border: ${theme.msgSelfBorder};
+    }
+  `;
+  document.head.appendChild(style);
+}
+
+// ====================================================================================================================
 //   . . . CSS INJECTION . . .
 // ====================================================================================================================
 
@@ -234,26 +303,14 @@ function injectCustomStyles() {
   const style = document.createElement("style");
   style.id = "cwg-bamboo-styles";
   style.textContent = /* CSS */ `
-        :root {
-          --glass-bg: rgba(255, 255, 255, 0.05);
-          --glass-border: rgba(255, 255, 255, 0.2);
-          --glass-blur: 16px;
-          --glass-radius: 12px;
-          --accent: #7eb8ff;
-          --error: #ff6b6b;
-          --warning: #ffa94d;
-          --text-primary: #ffffff;
-          --text-secondary: rgba(255, 255, 255, 0.6);
-        }
-        
         .glass-panel {
-          background-color: var(--glass-bg);
-          border: 1px solid var(--glass-border);
-          backdrop-filter: blur(var(--glass-blur));
-          -webkit-backdrop-filter: blur(var(--glass-blur));
-          border-radius: var(--glass-radius);
+          background-color: var(--bamboo-hud-bg);
+          border: 1px solid var(--bamboo-hud-border);
+          backdrop-filter: blur(var(--bamboo-hud-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-hud-blur));
+          border-radius: 12px;
           box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.2);
-          color: var(--text-primary);
+          color: var(--bamboo-hud-text);
           font-family: "Montserrat", sans-serif;
         }
         
@@ -268,7 +325,7 @@ function injectCustomStyles() {
           height: 30px;
           box-sizing: border-box;
           margin-left: 8px;
-          border-radius: var(--glass-radius);
+          border-radius: 12px;
           line-height: 1;
         }
 
@@ -280,9 +337,9 @@ function injectCustomStyles() {
           align-items: center;
           justify-content: center;
           cursor: pointer;
-          border: 1px solid var(--glass-border);
-          background-color: var(--glass-bg);
-          color: var(--text-primary);
+          border: 1px solid var(--bamboo-hud-border);
+          background-color: var(--bamboo-hud-bg);
+          color: var(--bamboo-hud-text);
           transition: background-color 0.2s ease, transform 0.1s ease;
           font-size: 18px;
           padding: 0;
@@ -316,7 +373,7 @@ function injectCustomStyles() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          border-bottom: 1px solid var(--glass-border);
+          border-bottom: 1px solid var(--bamboo-hud-border);
           padding-bottom: 6px;
           margin-bottom: 8px;
           user-select: none;
@@ -330,21 +387,21 @@ function injectCustomStyles() {
         }
 
         .bamboo-chat-tab {
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           cursor: pointer;
           transition: color 0.2s;
         }
 
         .bamboo-chat-tab.active {
-          color: var(--accent);
-          border-bottom: 1px solid var(--accent);
+          color: var(--bamboo-accent);
+          border-bottom: 1px solid var(--bamboo-accent);
           padding-bottom: 2px;
         }
 
         .bamboo-resize-handle {
           width: 16px;
           height: 16px;
-          background-color: var(--glass-border);
+          background-color: var(--bamboo-hud-border);
           border-radius: 4px;
           cursor: ns-resize;
           opacity: 0.6;
@@ -354,7 +411,7 @@ function injectCustomStyles() {
           justify-content: center;
           font-size: 10px;
           line-height: 1;
-          color: var(--text-primary);
+          color: var(--bamboo-hud-text);
           user-select: none;
           font-weight: bold;
           box-sizing: border-box;
@@ -362,7 +419,7 @@ function injectCustomStyles() {
 
         .bamboo-resize-handle:hover {
           opacity: 1;
-          background-color: var(--accent);
+          background-color: var(--bamboo-accent);
         }
 
         #cwg-bamboo-chat-messages {
@@ -379,11 +436,11 @@ function injectCustomStyles() {
           font-size: 13px;
           line-height: 1.4;
           word-break: break-word;
-          color: var(--text-primary);
+          color: var(--bamboo-hud-text);
           padding: 6px 12px;
           border-radius: 12px;
-          background: rgba(255, 255, 255, 0.06);
-          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: var(--bamboo-msg-bg);
+          border: 1px solid var(--bamboo-msg-border);
           max-width: 85%;
           align-self: flex-start;
           box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
@@ -392,12 +449,12 @@ function injectCustomStyles() {
 
         .bamboo-chat-msg.self {
           align-self: flex-end;
-          background: rgba(126, 184, 255, 0.12);
-          border-color: rgba(126, 184, 255, 0.25);
+          background: var(--bamboo-msg-self-bg);
+          border-color: var(--bamboo-msg-self-border);
         }
 
         .bamboo-chat-msg .time {
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           font-size: 12px;
           margin-right: 6px;
           font-family: monospace;
@@ -405,11 +462,11 @@ function injectCustomStyles() {
 
         .bamboo-chat-msg .author {
           font-weight: 700;
-          color: var(--accent);
+          color: var(--bamboo-accent);
         }
 
         .bamboo-chat-msg.system {
-          color: var(--warning);
+          color: var(--bamboo-warning);
           font-style: italic;
           align-self: center;
           background: rgba(255, 169, 77, 0.05);
@@ -431,10 +488,10 @@ function injectCustomStyles() {
         }
 
         body.bamboo-hide-native-chat button[aria-label="open chat"] {
-          border: 1px solid var(--glass-border) !important;
-          background-color: var(--glass-bg) !important;
-          backdrop-filter: blur(var(--glass-blur)) !important;
-          -webkit-backdrop-filter: blur(var(--glass-blur)) !important;
+          border: 1px solid var(--bamboo-hud-border) !important;
+          background-color: var(--bamboo-hud-bg) !important;
+          backdrop-filter: blur(var(--bamboo-hud-blur)) !important;
+          -webkit-backdrop-filter: blur(var(--bamboo-hud-blur)) !important;
           border-radius: 50% !important;
           transition: background-color 0.2s ease, transform 0.1s ease !important;
         }
@@ -462,6 +519,15 @@ function injectCustomStyles() {
         }
 
         .bamboo-settings-container {
+          background-color: var(--bamboo-modal-bg);
+          border: 1px solid var(--bamboo-modal-border);
+          backdrop-filter: blur(var(--bamboo-modal-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-modal-blur));
+          border-radius: 12px;
+          box-shadow: 0 4px 12px 0 rgba(0, 0, 0, 0.3);
+          color: var(--bamboo-text-primary);
+          font-family: "Montserrat", sans-serif;
+          
           padding: 20px;
           width: 450px;
           max-height: 85vh;
@@ -476,7 +542,7 @@ function injectCustomStyles() {
           display: flex;
           justify-content: space-between;
           align-items: center;
-          border-bottom: 1px solid var(--glass-border);
+          border-bottom: 1px solid var(--bamboo-modal-border);
           padding-bottom: 10px;
           font-size: 1.1rem;
           font-weight: 600;
@@ -504,7 +570,7 @@ function injectCustomStyles() {
         .bamboo-settings-category-title {
           font-size: 12px;
           font-weight: 700;
-          color: var(--accent);
+          color: var(--bamboo-accent);
           text-transform: uppercase;
           letter-spacing: 0.8px;
           border-bottom: 1px solid rgba(255, 255, 255, 0.05);
@@ -513,12 +579,12 @@ function injectCustomStyles() {
         }
 
         .bamboo-settings-footer {
-          border-top: 1px solid var(--glass-border);
+          border-top: 1px solid var(--bamboo-modal-border);
           padding-top: 12px;
           margin-top: 4px;
           text-align: center;
           font-size: 12px;
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           display: flex;
           flex-direction: column;
           gap: 4px;
@@ -534,11 +600,11 @@ function injectCustomStyles() {
 
         .select-selected {
           background-color: rgba(255, 255, 255, 0.05);
-          border: 1px solid var(--glass-border);
+          border: 1px solid var(--bamboo-modal-border);
           border-radius: 6px;
           padding: 6px 12px;
           cursor: pointer;
-          color: var(--text-primary);
+          color: var(--bamboo-text-primary);
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
@@ -553,7 +619,7 @@ function injectCustomStyles() {
           position: absolute;
           background-color: rgba(20, 20, 20, 0.95);
           backdrop-filter: blur(10px);
-          border: 1px solid var(--glass-border);
+          border: 1px solid var(--bamboo-modal-border);
           border-radius: 6px;
           left: 0;
           right: 0;
@@ -570,20 +636,20 @@ function injectCustomStyles() {
         }
 
         .select-items div {
-          color: var(--text-primary);
+          color: var(--bamboo-text-primary);
           padding: 8px 12px;
           cursor: pointer;
           transition: background-color 0.2s, color 0.2s;
         }
 
         .select-items div:hover {
-          background-color: var(--accent);
+          background-color: var(--bamboo-accent);
           color: #000;
         }
 
         .bamboo-input {
           background: rgba(255, 255, 255, 0.05);
-          border: 1px solid var(--glass-border);
+          border: 1px solid var(--bamboo-modal-border);
           border-radius: 6px;
           padding: 6px 10px;
           color: #fff;
@@ -595,13 +661,13 @@ function injectCustomStyles() {
         }
 
         .bamboo-input:focus {
-          border-color: var(--accent);
+          border-color: var(--bamboo-accent);
         }
 
         .bamboo-btn {
           background: rgba(126, 184, 255, 0.12);
-          border: 1px solid var(--glass-border);
-          color: var(--accent);
+          border: 1px solid var(--bamboo-modal-border);
+          color: var(--bamboo-accent);
           border-radius: 6px;
           padding: 6px 12px;
           cursor: pointer;
@@ -637,7 +703,7 @@ function injectCustomStyles() {
           width: 14px;
           height: 14px;
           border-radius: 50%;
-          background: var(--accent);
+          background: var(--bamboo-accent);
           cursor: pointer;
           transition: transform 0.1s;
         }
@@ -648,11 +714,11 @@ function injectCustomStyles() {
 
         .bamboo-reload-notice {
           background-color: rgba(255, 169, 77, 0.1);
-          border: 1px solid var(--warning);
+          border: 1px solid var(--bamboo-warning);
           border-radius: 8px;
           padding: 8px 12px;
           font-size: 12px;
-          color: var(--warning);
+          color: var(--bamboo-warning);
           text-align: center;
           margin-top: 10px;
           display: none;
@@ -660,11 +726,11 @@ function injectCustomStyles() {
 
         .bamboo-storage-error {
           background-color: rgba(255, 107, 107, 0.12);
-          border: 1px solid var(--error);
+          border: 1px solid var(--bamboo-error);
           border-radius: 8px;
           padding: 8px 12px;
           font-size: 12px;
-          color: var(--error);
+          color: var(--bamboo-error);
           text-align: center;
           margin-top: 10px;
           line-height: 1.3;
@@ -673,7 +739,7 @@ function injectCustomStyles() {
         .bamboo-version-badge {
           display: inline-block;
           background: rgba(126, 184, 255, 0.12);
-          color: var(--accent);
+          color: var(--bamboo-accent);
           padding: 2px 6px;
           border-radius: 4px;
           font-weight: 700;
@@ -715,7 +781,7 @@ function injectCustomStyles() {
         }
 
         .bamboo-news-title {
-          color: var(--text-secondary);
+          color: var(--bamboo-text-secondary);
           font-size: 12px;
           font-weight: 500;
           white-space: nowrap;
@@ -730,7 +796,7 @@ function injectCustomStyles() {
           transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
           line-height: 1.4;
           background: rgba(0, 0, 0, 0.15);
-          color: var(--text-primary);
+          color: var(--bamboo-text-primary);
         }
 
         .bamboo-news-body.open {
@@ -745,7 +811,7 @@ function injectCustomStyles() {
 
         .bamboo-badge-current {
           background: rgba(126, 184, 255, 0.15);
-          color: var(--accent);
+          color: var(--bamboo-accent);
           padding: 1.5px 5px;
           border-radius: 3px;
           font-weight: 700;
@@ -753,17 +819,17 @@ function injectCustomStyles() {
 
         .bamboo-badge-new {
           background: rgba(255, 169, 77, 0.15);
-          color: var(--warning);
+          color: var(--bamboo-warning);
           padding: 1.5px 5px;
           border-radius: 3px;
           font-weight: 700;
         }
 
         .bamboo-close-btn {
-          background: none; border: none; color: var(--text-primary);
+          background: none; border: none; color: var(--bamboo-text-primary);
           font-size: 1.5rem; cursor: pointer; transition: color 0.2s;
         }
-        .bamboo-close-btn:hover { color: var(--error); }
+        .bamboo-close-btn:hover { color: var(--bamboo-error); }
 
         .bamboo-setting-row {
           display: flex;
@@ -775,7 +841,7 @@ function injectCustomStyles() {
         .bamboo-checkbox {
           width: 20px; height: 20px;
           appearance: none;
-          border: 2px solid var(--glass-border);
+          border: 2px solid var(--bamboo-modal-border);
           border-radius: 4px;
           background-color: transparent;
           cursor: pointer;
@@ -783,8 +849,8 @@ function injectCustomStyles() {
           transition: background-color 0.2s, border-color 0.2s;
         }
         .bamboo-checkbox:checked {
-          background-color: var(--accent);
-          border-color: var(--accent);
+          background-color: var(--bamboo-accent);
+          border-color: var(--bamboo-accent);
         }
         .bamboo-checkbox:checked::after {
           content: "✔";
@@ -2558,8 +2624,9 @@ async function initMod() {
   logger.log("[CWG Mod] Initializing...");
 
   loadSettings();
-
   loadCustomSounds();
+
+  applyBambooTheme();
 
   injectCustomStyles();
   createSettingsModal();
@@ -2568,8 +2635,6 @@ async function initMod() {
   logger.log("[CWG Mod] CWGPlayground API detected!");
 
   initPlayPage();
-
-  initEventNotificationObserver();
 }
 
 initMod();
