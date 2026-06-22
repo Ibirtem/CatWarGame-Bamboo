@@ -459,7 +459,7 @@ function injectCustomStyles() {
 
         .bamboo-settings-container {
           padding: 20px;
-          width: 340px;
+          width: 450px;
           max-height: 85vh;
           display: flex;
           flex-direction: column;
@@ -575,11 +575,10 @@ function injectCustomStyles() {
 
         .bamboo-news-header {
           display: flex;
-          justify-content: space-between;
-          align-items: center;
+          flex-direction: column;
+          align-items: flex-start;
+          gap: 2px;
           padding: 8px 10px;
-          font-size: 11px;
-          font-weight: 600;
           cursor: pointer;
           user-select: none;
           transition: background-color 0.2s;
@@ -589,26 +588,20 @@ function injectCustomStyles() {
           background: rgba(255, 255, 255, 0.07);
         }
 
-        .bamboo-news-version-info {
-          display: flex;
-          align-items: center;
-          gap: 6px;
-        }
-
         .bamboo-news-title {
           color: var(--text-secondary);
-          font-weight: normal;
+          font-size: 12px;
+          font-weight: 500;
           white-space: nowrap;
           overflow: hidden;
           text-overflow: ellipsis;
-          max-width: 140px;
+          text-align: left;
         }
 
         .bamboo-news-body {
           max-height: 0;
           overflow: hidden;
           transition: max-height 0.25s cubic-bezier(0.4, 0, 0.2, 1);
-          font-size: 11px;
           line-height: 1.4;
           background: rgba(0, 0, 0, 0.15);
           color: var(--text-primary);
@@ -622,8 +615,7 @@ function injectCustomStyles() {
         .bamboo-badge-current {
           background: rgba(126, 184, 255, 0.15);
           color: var(--accent);
-          font-size: 9px;
-          padding: 1px 4px;
+          padding: 1.5px 5px;
           border-radius: 3px;
           font-weight: 700;
         }
@@ -631,8 +623,7 @@ function injectCustomStyles() {
         .bamboo-badge-new {
           background: rgba(255, 169, 77, 0.15);
           color: var(--warning);
-          font-size: 9px;
-          padding: 1px 4px;
+          padding: 1.5px 5px;
           border-radius: 3px;
           font-weight: 700;
         }
@@ -896,7 +887,7 @@ function createSettingsModal() {
     ? `<div class="bamboo-storage-error">⚠️ Tampermonkey API недоступно. Настройки будут сохранены локально для этого домена.</div>`
     : "";
 
-  overlay.innerHTML = `
+  overlay.innerHTML = /* HTML */ `
     <div class="glass-panel bamboo-settings-container">
       <div class="bamboo-settings-header">
         <span>🎋 Настройки Бамбука</span>
@@ -907,45 +898,66 @@ function createSettingsModal() {
       <div class="bamboo-reload-notice" id="cwg-bamboo-reload-notice">
         ⏳ Для гарантированного применения изменений перезагрузите страницу.
       </div>
-      
+
       <div class="bamboo-settings-content">
-        <!-- Category 1: HUD Overlays -->
+        <!-- HUD Overlays -->
         <div class="bamboo-settings-category">
           <div class="bamboo-settings-category-title">Интерфейс (HUD)</div>
           <div class="bamboo-setting-row">
             <span>Показывать время</span>
-            <input type="checkbox" class="bamboo-checkbox" data-setting="showTimeHUD">
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="showTimeHUD"
+            />
           </div>
           <div class="bamboo-setting-row">
             <span>Показывать локацию</span>
-            <input type="checkbox" class="bamboo-checkbox" data-setting="showLocationHUD">
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="showLocationHUD"
+            />
           </div>
         </div>
 
-        <!-- Category 2: Chat & Communication -->
+        <!-- Chat & Communication -->
         <div class="bamboo-settings-category">
-          <div class="bamboo-settings-category-title">Общение и Взаимодействие</div>
+          <div class="bamboo-settings-category-title">
+            Общение и Взаимодействие
+          </div>
           <div class="bamboo-setting-row">
             <span>Улучшенный чат</span>
-            <input type="checkbox" class="bamboo-checkbox" data-setting="enableBambooChat">
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="enableBambooChat"
+            />
           </div>
         </div>
 
-        <!-- Category 3: System, Logging & Debug -->
+        <!-- System, Logging & Debug -->
         <div class="bamboo-settings-category">
           <div class="bamboo-settings-category-title">Отладка и Разработка</div>
           <div class="bamboo-setting-row">
             <span>Логирование мода</span>
-            <input type="checkbox" class="bamboo-checkbox" data-setting="enableLogging">
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="enableLogging"
+            />
           </div>
           <div class="bamboo-setting-row">
             <span>Логирование сети</span>
-            <input type="checkbox" class="bamboo-checkbox" data-setting="enableNetworkLogging">
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="enableNetworkLogging"
+            />
           </div>
         </div>
       </div>
-      
-      <!-- Footer -->
+
       <div class="bamboo-settings-footer"></div>
     </div>
   `;
@@ -1020,19 +1032,29 @@ async function renderFooterNews() {
         badgeHTML = `<span class="bamboo-badge-new">Новая!</span>`;
       }
 
-      const itemHTML = `
+      const itemHTML = /* HTML */ `
         <div class="bamboo-news-item" data-version="${update.version}">
           <div class="bamboo-news-header">
-            <div class="bamboo-news-version-info">
+            <div
+              style="display: flex; align-items: center; gap: 6px; width: 100%; margin-bottom: 2px;"
+            >
               <span class="bamboo-version-badge">${update.version}</span>
+              <span style="opacity: 0.5; font-size: 10px; font-weight: normal;"
+                >${update.date}</span
+              >
               ${badgeHTML}
-              <span class="bamboo-news-title" title="${update.title}">${update.title}</span>
             </div>
-            <span style="opacity: 0.6; font-size: 9px;">${update.date}</span>
+            <div class="bamboo-news-title" title="${update.title}">
+              ${update.title}
+            </div>
           </div>
           <div class="bamboo-news-body">
             <div class="bamboo-news-body-content">
-              <div style="font-size: 10px; opacity: 0.5; text-align: center; padding: 8px 0;">Загрузка деталей...</div>
+              <div
+                style="font-size: 10px; opacity: 0.5; text-align: center; padding: 8px 0;"
+              >
+                Загрузка деталей...
+              </div>
             </div>
           </div>
         </div>
@@ -1051,6 +1073,7 @@ async function renderFooterNews() {
 
         listElement.querySelectorAll(".bamboo-news-body").forEach((b) => {
           b.style.maxHeight = "0px";
+          b.style.overflowY = "hidden";
         });
 
         if (!isOpen) {
@@ -1060,9 +1083,13 @@ async function renderFooterNews() {
             content.setAttribute("data-loaded", "true");
           }
 
-          body.style.maxHeight = `${content.scrollHeight + 16}px`;
+          const targetHeight = Math.min(130, content.scrollHeight + 16);
+          body.style.maxHeight = `${targetHeight}px`;
+
+          body.style.overflowY = "auto";
         } else {
           body.style.maxHeight = "0px";
+          body.style.overflowY = "hidden";
         }
       });
     });
