@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CWG-Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.1.0-06.26
+// @version      v1.2.0-06.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
@@ -30,6 +30,7 @@ const bambooDefaultSettings = {
   showTimeHUD: false,
   showDateHUD: false,
   showLocationHUD: false,
+  showActionHotbar: false,
 
   enableBambooChat: false,
   enableLogging: false,
@@ -123,6 +124,39 @@ const logger = {
 };
 
 // ====================================================================================================================
+//   . . . NETWORK MANAGER . . .
+// ====================================================================================================================
+
+const networkManager = {
+  activeSocket: null,
+
+  /**
+   * Sends a JSON packet over an active WebSocket connection.
+   * @param {Object} packet - The packet object
+   */
+  sendPacket: (packet) => {
+    if (
+      networkManager.activeSocket &&
+      networkManager.activeSocket.readyState ===
+        networkManager.activeSocket.OPEN
+    ) {
+      try {
+        const rawData = JSON.stringify(packet);
+        networkManager.activeSocket.send(rawData);
+
+        if (bambooSettings.enableNetworkLogging) {
+          console.log(`[CWG-Bamboo WS Packet OUT-BAMBOO]`, packet);
+        }
+      } catch (e) {
+        logger.error("[CWG-Bamboo] Error serializing/sending packet:", e);
+      }
+    } else {
+      logger.warn("[CWG-Bamboo] Unable to send packet: WebSocket is not open.");
+    }
+  },
+};
+
+// ====================================================================================================================
 //   . . . NETWORK & CANVAS INTERCEPTORS . . .
 // ====================================================================================================================
 
@@ -141,6 +175,22 @@ const logger = {
         console.log(`[CWG-Bamboo] Intercepted WebSocket connection to: ${url}`);
       }
       const ws = new OriginalWebSocket(url, protocols);
+
+      ws.addEventListener("open", () => {
+        networkManager.activeSocket = ws;
+        logger.log(
+          "[CWG-Bamboo] WebSocket opened and captured by networkManager.",
+        );
+      });
+
+      ws.addEventListener("close", () => {
+        if (networkManager.activeSocket === ws) {
+          networkManager.activeSocket = null;
+          logger.log(
+            "[CWG-Bamboo] WebSocket closed. networkManager reference cleared.",
+          );
+        }
+      });
 
       ws.addEventListener("message", (event) => {
         try {
@@ -164,15 +214,28 @@ const logger = {
             }
 
             if (bambooSettings.enableNetworkLogging) {
-              console.log("[CWG-Bamboo WS Packet]", packet);
+              console.log("[CWG-Bamboo WS Packet IN]", packet);
             }
           }
         } catch (e) {
           if (bambooSettings.enableNetworkLogging) {
-            console.log("[CWG-Bamboo WS Raw]", event.data);
+            console.log("[CWG-Bamboo WS Raw IN]", event.data);
           }
         }
       });
+
+      const originalSend = ws.send;
+      ws.send = function (data) {
+        if (bambooSettings.enableNetworkLogging) {
+          try {
+            const parsed = JSON.parse(data);
+            console.log("[CWG-Bamboo WS Packet OUT-NATIVE]", parsed);
+          } catch (e) {
+            console.log("[CWG-Bamboo WS Raw OUT-NATIVE]", data);
+          }
+        }
+        return originalSend.apply(this, arguments);
+      };
 
       return ws;
     };
@@ -886,6 +949,66 @@ function injectCustomStyles() {
           color: #fff;
           font-size: 12px;
         }
+
+        /* --- ACTION HOTBAR --- */
+        #cwg-bamboo-hotbar {
+          position: fixed;
+          bottom: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          gap: 10px;
+          padding: 8px 12px;
+          z-index: 997;
+          transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        .bamboo-hotbar-btn {
+          width: 46px;
+          height: 46px;
+          border-radius: 12px;
+          background-color: var(--bamboo-hud-upper-bg);
+          border: 1px solid var(--bamboo-hud-upper-border);
+          color: var(--bamboo-hud-upper-text);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: background-color 0.2s ease, transform 0.1s ease, filter 0.2s ease;
+          user-select: none;
+          position: relative;
+        }
+
+        .bamboo-hotbar-btn:hover:not(.disabled) {
+          background-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .bamboo-hotbar-btn:active:not(.disabled) {
+          transform: scale(0.92);
+        }
+
+        .bamboo-hotbar-btn.disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          filter: grayscale(100%);
+        }
+
+        .bamboo-hotbar-icon {
+          font-size: 18px;
+          line-height: 1;
+        }
+
+        .bamboo-hotbar-label {
+          font-size: 9px;
+          font-weight: 600;
+          margin-top: 4px;
+          opacity: 0.8;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 42px;
+        }
     `;
   document.head.appendChild(style);
 }
@@ -1561,6 +1684,14 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
             data-setting="showLocationHUD"
           />
         </div>
+        <div class="bamboo-setting-row">
+          <span>Панель действий (Хот-бар)</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showActionHotbar"
+          />
+        </div>
       </div>
 
       <!-- Chat & Communication -->
@@ -1749,6 +1880,16 @@ function bindSettingsListeners() {
         } else {
           document.body.classList.remove("bamboo-hide-native-location");
           if (locHud) locHud.style.display = "none";
+        }
+      }
+
+      if (setting === "showActionHotbar") {
+        const hotbar = document.getElementById("cwg-bamboo-hotbar");
+        if (element.checked) {
+          if (hotbar) hotbar.style.display = "flex";
+          else initHotbarHUD();
+        } else {
+          if (hotbar) hotbar.style.display = "none";
         }
       }
     });
@@ -2793,6 +2934,129 @@ function makeChatResizable(chatPanel, handle) {
 }
 
 // ====================================================================================================================
+//   . . . ACTION HOTBAR LOGIC . . .
+// ====================================================================================================================
+
+function initHotbarActions() {
+  hotbarManager.registerAction("action_sit", "🐾", "Сесть", () => {
+    networkManager.sendPacket({ code: 2021 });
+  });
+
+  hotbarManager.registerAction("action_sleep", "💤", "Спать", () => {
+    networkManager.sendPacket({ code: 2016, payload: {} });
+  });
+
+  hotbarManager.registerAction("action_lick_self", "🩹", "Вылизаться", () => {
+    const gameWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const me = gameWindow.CWGPlayground?.me();
+
+    if (me && me.id) {
+      networkManager.sendPacket({ code: 2012, payload: { licked: me.id } });
+    } else {
+      logger.warn("[CWG-Bamboo] Unable to get your ID for licking.");
+    }
+  });
+}
+
+// ====================================================================================================================
+//   . . . ACTION HOTBAR MANAGEMENT . . .
+// ====================================================================================================================
+
+const hotbarManager = {
+  actions: [],
+
+  /**
+   * Registers a new button in the hotbar.
+   * @param {string} id - Unique identifier
+   * @param {string} icon - Emoji or icon text
+   * @param {string} label - Icon caption
+   * @param {Function} callback - Function called on click
+   */
+  registerAction: function (id, icon, label, callback) {
+    const existing = this.actions.find((a) => a.id === id);
+    if (existing) {
+      existing.icon = icon;
+      existing.label = label;
+      existing.callback = callback;
+    } else {
+      this.actions.push({ id, icon, label, callback, disabled: false });
+    }
+    this.render();
+  },
+
+  /**
+   * Locks or unlocks a button (e.g., when the action is impossible).
+   */
+  setDisabled: function (id, isDisabled) {
+    const action = this.actions.find((a) => a.id === id);
+    if (action && action.disabled !== isDisabled) {
+      action.disabled = isDisabled;
+      this.render();
+    }
+  },
+
+  /**
+   * Re-renders the hotbar.
+   */
+  render: function () {
+    const container = document.getElementById("cwg-bamboo-hotbar");
+    if (!container) return;
+
+    container.innerHTML = "";
+
+    if (this.actions.length === 0) {
+      const placeholder = document.createElement("div");
+      placeholder.className = "bamboo-hotbar-btn disabled";
+      placeholder.title = "Пока нет доступных действий";
+      placeholder.innerHTML = `
+        <div class="bamboo-hotbar-icon">🫙</div>
+        <div class="bamboo-hotbar-label">Пусто :(</div>
+      `;
+      container.appendChild(placeholder);
+      return;
+    }
+
+    this.actions.forEach((action) => {
+      const btn = document.createElement("div");
+      btn.className =
+        "bamboo-hotbar-btn" + (action.disabled ? " disabled" : "");
+      btn.title = action.label;
+      btn.innerHTML = `
+        <div class="bamboo-hotbar-icon">${action.icon}</div>
+        <div class="bamboo-hotbar-label">${action.label}</div>
+      `;
+
+      btn.addEventListener("click", () => {
+        if (!action.disabled && typeof action.callback === "function") {
+          action.callback();
+        }
+      });
+
+      container.appendChild(btn);
+    });
+  },
+};
+
+/**
+ * Initializes and embeds the action bar into the DOM.
+ */
+function initHotbarHUD() {
+  if (!bambooSettings.showActionHotbar) return;
+  if (document.getElementById("cwg-bamboo-hotbar")) return;
+
+  const hotbar = document.createElement("div");
+  hotbar.id = "cwg-bamboo-hotbar";
+  hotbar.className = "glass-panel";
+  document.body.appendChild(hotbar);
+
+  hotbarManager.render();
+  logger.log("[CWG-Bamboo] Action Hotbar initialized.");
+
+  initHotbarActions();
+}
+
+// ====================================================================================================================
 //   . . . PAGE ROUTERS (TABLE OF CONTENTS) . . .
 // ====================================================================================================================
 
@@ -2817,6 +3081,10 @@ function initPlayPage() {
     initLocationHUD();
   }
 
+  if (bambooSettings.showActionHotbar) {
+    initHotbarHUD();
+  }
+
   if (bambooSettings.enableBambooChat) {
     document.body.classList.add("bamboo-hide-native-bubbles");
     initBambooChat();
@@ -2824,7 +3092,6 @@ function initPlayPage() {
   }
 
   initSettingsButton();
-
   initEventNotificationObserver();
 }
 
