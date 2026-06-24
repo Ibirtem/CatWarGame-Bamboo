@@ -1009,6 +1009,139 @@ function injectCustomStyles() {
           text-overflow: ellipsis;
           max-width: 42px;
         }
+
+        .bamboo-hotbar-divider {
+          width: 2px;
+          background-color: var(--bamboo-hud-upper-border);
+          border-radius: 2px;
+          margin: 4px 6px;
+          opacity: 0.6;
+        }
+
+        #cwg-tc-panel {
+          position: fixed;
+          top: 70px;
+          right: 70px;
+          width: max-content; 
+          min-width: 340px; 
+          background-color: var(--bamboo-modal-bg);
+          border: 1px solid var(--bamboo-modal-border);
+          backdrop-filter: blur(var(--bamboo-modal-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-modal-blur));
+          border-radius: 12px;
+          color: var(--bamboo-text-primary);
+          font-family: "Montserrat", sans-serif;
+          z-index: 99999;
+          padding: 16px;
+          box-shadow: 0 6px 16px rgba(0,0,0,0.5);
+          display: none;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .tc-header {
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--bamboo-accent);
+          border-bottom: 1px solid var(--bamboo-modal-border);
+          padding-bottom: 8px;
+          margin: 0;
+          user-select: none;
+          cursor: move;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .tc-close { 
+          cursor: pointer; 
+          color: var(--bamboo-text-secondary); 
+          font-size: 20px; 
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: Arial, sans-serif; 
+          width: 24px;
+          height: 24px;
+          transition: color 0.2s;
+        }
+
+        .tc-close:hover {
+          color: var(--bamboo-error);
+        }
+
+        .tc-columns {
+          display: flex;
+          gap: 12px;
+        }
+
+        .tc-col {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          background: rgba(0, 0, 0, 0.15);
+          padding: 10px;
+          border-radius: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .tc-col-title {
+          text-align: center;
+          font-size: 11px;
+          font-weight: bold;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .tc-date-row {
+          display: flex;
+          gap: 4px;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .tc-date-row span {
+          color: var(--bamboo-text-secondary);
+          font-size: 12px;
+          font-weight: bold;
+        }
+
+        .tc-input {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--bamboo-modal-border);
+          color: var(--bamboo-text-primary);
+          border-radius: 4px;
+          padding: 4px;
+          font-family: monospace;
+          font-size: 12px;
+          text-align: center;
+          outline: none;
+          transition: border-color 0.2s;
+        }
+
+        .tc-input:focus {
+          border-color: var(--bamboo-accent);
+        }
+
+        .tc-sm {
+          width: 28px;
+        }
+
+        .tc-lg {
+          width: 44px;
+        }
+
+        .tc-input::-webkit-outer-spin-button,
+        .tc-input::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+
+        .tc-input[type="number"] {
+          -moz-appearance: textfield;
+        }
     `;
   document.head.appendChild(style);
 }
@@ -2957,6 +3090,14 @@ function initHotbarActions() {
       logger.warn("[CWG-Bamboo] Unable to get your ID for licking.");
     }
   });
+
+  hotbarManager.registerAction(
+    "tool_timecalc",
+    "🧮",
+    "Время",
+    toggleTimeCalculator,
+    "tool",
+  );
 }
 
 // ====================================================================================================================
@@ -2972,15 +3113,17 @@ const hotbarManager = {
    * @param {string} icon - Emoji or icon text
    * @param {string} label - Icon caption
    * @param {Function} callback - Function called on click
+   * @param {string} type - 'action' (default) or 'tool' (for utility windows)
    */
-  registerAction: function (id, icon, label, callback) {
+  registerAction: function (id, icon, label, callback, type = "action") {
     const existing = this.actions.find((a) => a.id === id);
     if (existing) {
       existing.icon = icon;
       existing.label = label;
       existing.callback = callback;
+      existing.type = type;
     } else {
-      this.actions.push({ id, icon, label, callback, disabled: false });
+      this.actions.push({ id, icon, label, callback, type, disabled: false });
     }
     this.render();
   },
@@ -3017,7 +3160,10 @@ const hotbarManager = {
       return;
     }
 
-    this.actions.forEach((action) => {
+    const actions = this.actions.filter((a) => a.type === "action");
+    const tools = this.actions.filter((a) => a.type === "tool");
+
+    const renderBtn = (action) => {
       const btn = document.createElement("div");
       btn.className =
         "bamboo-hotbar-btn" + (action.disabled ? " disabled" : "");
@@ -3032,11 +3178,431 @@ const hotbarManager = {
           action.callback();
         }
       });
-
       container.appendChild(btn);
-    });
+    };
+
+    actions.forEach(renderBtn);
+
+    if (actions.length > 0 && tools.length > 0) {
+      const divider = document.createElement("div");
+      divider.className = "bamboo-hotbar-divider";
+      container.appendChild(divider);
+    }
+
+    tools.forEach(renderBtn);
   },
 };
+
+// ====================================================================================================================
+//   . . . TIME CALCULATOR . . .
+// ====================================================================================================================
+
+/**
+ * Virtual time:
+ * A game day lasts 90 minutes, of which the sun is above the horizon for 30 to 60 minutes.
+ * Depending on the time of year, daylight hours are calculated using the formula:
+ * f(x) = 45 + sin(-π/2 + x*π/6) * 15, where x is the current month.
+ * Thus, 1 virtual minute = 3.75 seconds in real time.
+ */
+const timeCalculator = {
+  isFirstOpen: true,
+  baseGameTime: 0,
+  baseRealTime: 0,
+  ratio: 120 / 1440,
+  isUpdatingUI: false,
+
+  initUI: function () {
+    if (document.getElementById("cwg-tc-panel")) return;
+
+    const panel = document.createElement("div");
+    panel.id = "cwg-tc-panel";
+    panel.innerHTML = /* HTML */ `
+      <div class="tc-header" id="tc-drag-handle">
+        <span>⏳ Калькулятор Времени</span>
+        <span class="tc-close" id="tc-close-btn" title="Закрыть">&times;</span>
+      </div>
+      <div class="tc-columns">
+        <div class="tc-col">
+          <div class="tc-col-title" style="color: var(--bamboo-warning)">
+            Игровое (День.Мес.Год)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="g-day"
+              class="tc-input tc-sm"
+              title="День"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="g-month"
+              class="tc-input tc-sm"
+              title="Месяц"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="g-year"
+              class="tc-input tc-lg"
+              title="Год"
+            />
+          </div>
+          <div
+            class="tc-col-title"
+            style="color: var(--bamboo-warning); margin-top: 4px"
+          >
+            Время (Час:Мин)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="g-hour"
+              class="tc-input tc-sm"
+              title="Час"
+            />
+            <span>:</span>
+            <input
+              type="number"
+              id="g-minute"
+              class="tc-input tc-sm"
+              title="Минута"
+            />
+          </div>
+        </div>
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.2);
+            font-size: 18px;
+            font-weight: bold;
+          "
+        >
+          ⇄
+        </div>
+        <div class="tc-col">
+          <div class="tc-col-title" style="color: var(--bamboo-accent)">
+            Реальное (День.Мес.Год)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="r-day"
+              class="tc-input tc-sm"
+              title="День"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="r-month"
+              class="tc-input tc-sm"
+              title="Месяц"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="r-year"
+              class="tc-input tc-lg"
+              title="Год"
+            />
+          </div>
+          <div
+            class="tc-col-title"
+            style="color: var(--bamboo-accent); margin-top: 4px"
+          >
+            Время (Час:Мин)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="r-hour"
+              class="tc-input tc-sm"
+              title="Час"
+            />
+            <span>:</span>
+            <input
+              type="number"
+              id="r-minute"
+              class="tc-input tc-sm"
+              title="Минута"
+            />
+          </div>
+        </div>
+      </div>
+      <div
+        class="bamboo-btn"
+        id="tc-sync-btn"
+        style="text-align: center; margin-top: 4px"
+      >
+        ⟳ Синхронизировать с игрой
+      </div>
+      <div
+        style="
+            font-size: 10px;
+            color: var(--bamboo-text-secondary);
+            text-align: center;
+            margin-top: -2px;
+          "
+        id="tc-ratio-info"
+      >
+        Ожидание данных сервера...
+      </div>
+    `;
+    document.body.appendChild(panel);
+
+    document.getElementById("tc-close-btn").addEventListener("click", () => {
+      panel.style.display = "none";
+    });
+
+    document
+      .getElementById("tc-sync-btn")
+      .addEventListener("click", this.syncWithCurrentTime.bind(this));
+
+    const updateFromGame = this.calculateFromGame.bind(this);
+    const updateFromReal = this.calculateFromReal.bind(this);
+
+    ["g-year", "g-month", "g-day", "g-hour", "g-minute"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", updateFromGame);
+    });
+    ["r-year", "r-month", "r-day", "r-hour", "r-minute"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", updateFromReal);
+    });
+
+    this.makeDraggable(panel, document.getElementById("tc-drag-handle"));
+  },
+
+  fetchRatio: function () {
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    try {
+      if (gw.CWGPlayground) {
+        const vt = gw.CWGPlayground.getVirtualTime();
+        if (vt && vt.dayDuration) {
+          this.ratio = vt.dayDuration / 1440;
+          return vt.dayDuration;
+        }
+      }
+    } catch (e) {}
+    this.ratio = 90 / 1440;
+    return 90;
+  },
+
+  renderDatesToUI: function (dateGame, dateReal) {
+    if (isNaN(dateGame.getTime()) || isNaN(dateReal.getTime())) return;
+    this.isUpdatingUI = true;
+
+    const pad = (num) => String(num).padStart(2, "0");
+
+    document.getElementById("g-year").value = dateGame.getFullYear();
+    document.getElementById("g-month").value = pad(dateGame.getMonth() + 1);
+    document.getElementById("g-day").value = pad(dateGame.getDate());
+    document.getElementById("g-hour").value = pad(dateGame.getHours());
+    document.getElementById("g-minute").value = pad(dateGame.getMinutes());
+
+    document.getElementById("r-year").value = dateReal.getFullYear();
+    document.getElementById("r-month").value = pad(dateReal.getMonth() + 1);
+    document.getElementById("r-day").value = pad(dateReal.getDate());
+    document.getElementById("r-hour").value = pad(dateReal.getHours());
+    document.getElementById("r-minute").value = pad(dateReal.getMinutes());
+
+    this.isUpdatingUI = false;
+  },
+
+  calculateFromGame: function () {
+    if (this.isUpdatingUI || this.baseGameTime === 0) return;
+    const getInt = (id, fallback) =>
+      isNaN(parseInt(document.getElementById(id).value))
+        ? fallback
+        : parseInt(document.getElementById(id).value);
+
+    const newG = new Date(0);
+    newG.setFullYear(
+      getInt("g-year", 1),
+      getInt("g-month", 1) - 1,
+      getInt("g-day", 1),
+    );
+    newG.setHours(getInt("g-hour", 0), getInt("g-minute", 0), 0, 0);
+
+    const diffGameMs = newG.getTime() - this.baseGameTime;
+    const diffRealMs = diffGameMs * this.ratio;
+
+    const newR = new Date(this.baseRealTime + diffRealMs);
+    this.renderDatesToUI(newG, newR);
+  },
+
+  calculateFromReal: function () {
+    if (this.isUpdatingUI || this.baseRealTime === 0) return;
+    const getInt = (id, fallback) =>
+      isNaN(parseInt(document.getElementById(id).value))
+        ? fallback
+        : parseInt(document.getElementById(id).value);
+
+    const newR = new Date(0);
+    newR.setFullYear(
+      getInt("r-year", 1),
+      getInt("r-month", 1) - 1,
+      getInt("r-day", 1),
+    );
+    newR.setHours(getInt("r-hour", 0), getInt("r-minute", 0), 0, 0);
+
+    const diffRealMs = newR.getTime() - this.baseRealTime;
+    const diffGameMs = diffRealMs / this.ratio;
+
+    const newG = new Date(this.baseGameTime + diffGameMs);
+    this.renderDatesToUI(newG, newR);
+  },
+
+  syncWithCurrentTime: function () {
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const infoLabel = document.getElementById("tc-ratio-info");
+
+    if (!gw.CWGPlayground) {
+      infoLabel.innerText = "❌ Зайдите в мир для синхронизации";
+      infoLabel.style.color = "var(--bamboo-error)";
+      return;
+    }
+
+    const dayDur = this.fetchRatio();
+    const rawDate =
+      typeof gw.CWGPlayground.getDate === "function"
+        ? gw.CWGPlayground.getDate()
+        : null;
+    const vTime =
+      typeof gw.CWGPlayground.getVirtualTime === "function"
+        ? gw.CWGPlayground.getVirtualTime()
+        : null;
+
+    let y = 0,
+      m = 0,
+      d = 0,
+      h = 0,
+      min = 0;
+
+    if (rawDate && typeof rawDate.year === "number") {
+      y = rawDate.year;
+      m = rawDate.moon;
+      d = rawDate.date;
+    } else if (
+      rawDate &&
+      Array.isArray(rawDate.value) &&
+      rawDate.value.length >= 5
+    ) {
+      y = rawDate.value[0];
+      m = rawDate.value[1];
+      d = rawDate.value[2];
+    } else if (
+      vTime &&
+      vTime.virtualDate &&
+      Array.isArray(vTime.virtualDate.value)
+    ) {
+      y = vTime.virtualDate.value[0];
+      m = vTime.virtualDate.value[1];
+      d = vTime.virtualDate.value[2];
+    } else {
+      infoLabel.innerText = "❌ Не удалось прочитать дату";
+      infoLabel.style.color = "var(--bamboo-error)";
+      return;
+    }
+
+    if (
+      rawDate &&
+      typeof rawDate.hour === "number" &&
+      typeof rawDate.minute === "number"
+    ) {
+      h = rawDate.hour;
+      min = rawDate.minute;
+    } else if (
+      rawDate &&
+      Array.isArray(rawDate.value) &&
+      rawDate.value.length >= 5
+    ) {
+      h = rawDate.value[3];
+      min = rawDate.value[4];
+    } else if (
+      vTime &&
+      vTime.virtualDate &&
+      Array.isArray(vTime.virtualDate.value)
+    ) {
+      h = vTime.virtualDate.value[3];
+      min = vTime.virtualDate.value[4];
+    }
+
+    const currentG = new Date(0);
+    currentG.setFullYear(y + 1, m, d + 1);
+    currentG.setHours(h, min, 0, 0);
+
+    this.baseGameTime = currentG.getTime();
+    this.baseRealTime = new Date().getTime();
+
+    infoLabel.innerText = `Синхронизировано (1 игр. день = ${dayDur} реал. мин)`;
+    infoLabel.style.color = "var(--bamboo-text-secondary)";
+
+    this.renderDatesToUI(currentG, new Date(this.baseRealTime));
+  },
+
+  makeDraggable: function (panel, handle) {
+    let pos1 = 0,
+      pos2 = 0,
+      pos3 = 0,
+      pos4 = 0;
+    handle.onmousedown = (e) => {
+      e = e || window.event;
+      if (e.target.id === "tc-close-btn") return;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      document.onmouseup = closeDragElement;
+      document.onmousemove = elementDrag;
+    };
+
+    function elementDrag(e) {
+      e = e || window.event;
+      pos1 = pos3 - e.clientX;
+      pos2 = pos4 - e.clientY;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+
+      let newTop = panel.offsetTop - pos2;
+      let newLeft = panel.offsetLeft - pos1;
+
+      const maxLeft = window.innerWidth - panel.offsetWidth;
+      const maxTop = window.innerHeight - panel.offsetHeight;
+
+      if (newLeft < 0) newLeft = 0;
+      if (newTop < 0) newTop = 0;
+      if (newLeft > maxLeft) newLeft = maxLeft;
+      if (newTop > maxTop) newTop = maxTop;
+
+      panel.style.top = newTop + "px";
+      panel.style.left = newLeft + "px";
+      panel.style.right = "auto";
+    }
+
+    function closeDragElement() {
+      document.onmouseup = null;
+      document.onmousemove = null;
+    }
+  },
+
+  togglePanel: function () {
+    const panel = document.getElementById("cwg-tc-panel");
+    if (!panel) return;
+    const isHidden =
+      panel.style.display === "none" || panel.style.display === "";
+    panel.style.display = isHidden ? "flex" : "none";
+
+    if (isHidden && this.isFirstOpen) {
+      this.syncWithCurrentTime();
+      this.isFirstOpen = false;
+    }
+  },
+};
+
+function toggleTimeCalculator() {
+  if (!document.getElementById("cwg-tc-panel")) {
+    timeCalculator.initUI();
+  }
+  timeCalculator.togglePanel();
+}
 
 /**
  * Initializes and embeds the action bar into the DOM.
