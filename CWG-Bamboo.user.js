@@ -3766,21 +3766,50 @@ const weatherManager = {
           return value;
       }
 
+      float stars(vec2 uv, float time) {
+          vec2 starUV = mod(uv * 0.06, 100.0); 
+          vec2 grid = floor(starUV);
+          float r = random(grid);
+          
+          float threshold = smoothstep(0.973, 0.978, r);
+          
+          vec2 f = fract(starUV) - 0.5;
+          vec2 offset = vec2(fract(r * 13.1), fract(r * 123.4)) - 0.5;
+          float d = length(f - offset);
+          
+          float size = 0.13 + 0.14 * fract(r * 1000.0);
+          float star = smoothstep(size, size * 0.1, d) * threshold;
+          
+          float speed = 0.2 + fract(r * 789.12) * 0.5;
+          float phase = fract(r * 1234.56) * 6.28;
+          float twinkle = 0.6 + 0.4 * sin(time * speed + phase);
+          return star * twinkle;
+      }
+
       void main() {
           vec4 baseColor = texture2D(uTexture, vTextureCoord);
           
-          vec2 pixelWorldPos = vec2(
+          vec2 starWorldPos = vec2(
+              (vScreenCoord.x - uWorldTransform.x * 0.03) / uWorldTransform.z,
+              (vScreenCoord.y - uWorldTransform.y * 0.03) / uWorldTransform.w
+          );
+
+          vec2 skyWorldPos = vec2(
               (vScreenCoord.x - uWorldTransform.x * 0.12) / uWorldTransform.z,
               (vScreenCoord.y - uWorldTransform.y * 0.12) / uWorldTransform.w
           );
           
-          vec2 cloudUV = vec2(pixelWorldPos.x * 0.00270, pixelWorldPos.y * 0.00540) + vec2(uTime * 0.016, uTime * 0.006);
+          vec2 cloudUV = vec2(skyWorldPos.x * 0.00270, skyWorldPos.y * 0.00540) + vec2(uTime * 0.016, uTime * 0.006);
           
           float n = fbm(cloudUV);
           float cloudDensity = smoothstep(0.45, 0.8, n) * uCloudOpacity; 
           
+          float starVal = stars(starWorldPos, uTime);
+          float starVisibility = 1.0 - smoothstep(0.1, 0.4, uCloudColorR);
+          vec3 skyWithStars = baseColor.rgb + vec3(starVal * starVisibility * baseColor.a);
+          
           vec3 cloudColor = vec3(uCloudColorR, uCloudColorG, uCloudColorB);
-          vec3 finalRGB = mix(baseColor.rgb, cloudColor * baseColor.a, cloudDensity);
+          vec3 finalRGB = mix(skyWithStars, cloudColor * baseColor.a, cloudDensity);
           gl_FragColor = vec4(finalRGB, baseColor.a);
       }
   `,
@@ -3872,7 +3901,7 @@ const weatherManager = {
       lerp(c1[2], c2[2], t),
     ];
 
-    const NIGHT_COLOR = [0.03, 0.05, 0.12]; // Very dark blue/grey
+    const NIGHT_COLOR = [0.1, 0.2, 0.4]; // Very dark blue/grey
     const DAWN_COLOR = [0.85, 0.6, 0.65]; // Soft pink
     const DAY_COLOR = [1.0, 1.0, 1.0]; // Bright white
     const SUNSET_COLOR = [1.0, 0.45, 0.25]; // Orange
