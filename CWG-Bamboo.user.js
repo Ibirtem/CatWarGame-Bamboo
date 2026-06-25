@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         CWG-Bamboo
+// @name         CWG - Bamboo
 // @namespace    http://tampermonkey.net/
 // @version      v1.2.0-06.26
 // @description  A mod that helps and expands your gameplay...
@@ -42,6 +42,8 @@ const bambooDefaultSettings = {
   enableEventNotification: false,
 
   hudTheme: "native",
+
+  enableWeatherShader: false,
 };
 
 let bambooSettings = {};
@@ -1918,6 +1920,19 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
         </div>
       </div>
 
+      <!-- Graphics & Weather -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Шейдеры</div>
+        <div class="bamboo-setting-row">
+          <span>Динамические облака и тени</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableWeatherShader"
+          />
+        </div>
+      </div>
+
       <!-- System, Logging & Debug -->
       <div class="bamboo-settings-category">
         <div class="bamboo-settings-category-title">Отладка и Разработка</div>
@@ -2023,6 +2038,14 @@ function bindSettingsListeners() {
           else initHotbarHUD();
         } else {
           if (hotbar) hotbar.style.display = "none";
+        }
+      }
+
+      if (setting === "enableWeatherShader") {
+        if (element.checked) {
+          weatherManager.init();
+        } else {
+          weatherManager.disable();
         }
       }
     });
@@ -3623,6 +3646,433 @@ function initHotbarHUD() {
 }
 
 // ====================================================================================================================
+//   . . . WEATHER & SHADER MANAGER . . .
+// ====================================================================================================================
+
+/**
+ * Manages the dynamic WebGL shader overlays for the game world.
+ * Uses exact inverse world-transform matrices to lock ground shadows to the terrain.
+ */
+const weatherManager = {
+  shadowFilter: null,
+  skyFilter: null,
+  uniforms: null,
+  startTime: 0,
+  loopId: null,
+  groundContainers: [],
+  skyContainers: [],
+  tickCounter: 0,
+
+  // WebGL1/2 Vertex
+  vertexSrc: `
+      precision highp float;
+      attribute vec2 aPosition;
+      varying vec2 vTextureCoord;
+      varying vec2 vScreenCoord;
+
+      uniform vec4 uInputSize;
+      uniform vec4 uOutputFrame;
+      uniform vec4 uOutputTexture;
+      
+      void main(void) {
+          vScreenCoord = aPosition * uOutputFrame.zw + uOutputFrame.xy;
+
+          vec2 position = vScreenCoord;
+          position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
+          position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
+          gl_Position = vec4(position, 0.0, 1.0);
+          vTextureCoord = aPosition * (uOutputFrame.zw * uInputSize.zw);
+      }
+  `,
+
+  // Ground shadows
+  shadowFragmentSrc: `
+      precision mediump float;
+      varying vec2 vTextureCoord;
+      varying vec2 vScreenCoord;
+      uniform sampler2D uTexture;
+      
+      uniform float uTime;
+      uniform vec4 uWorldTransform; // [tx, ty, scaleX, scaleY] - Camera translation matrix
+      uniform float uShadowOpacity;
+
+      float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+      float noise(vec2 st) {
+          vec2 i = floor(st); vec2 f = fract(st);
+          float a = random(i); float b = random(i + vec2(1.0, 0.0));
+          float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+      float fbm(vec2 st) {
+          float value = 0.0; float amplitude = 0.5; vec2 shift = vec2(100.0);
+          const mat2 rot = mat2(0.87758, 0.47943, -0.47943, 0.87758);
+          for (int i = 0; i < 2; ++i) {
+              value += amplitude * noise(st);
+              st = rot * st * 2.0 + shift; amplitude *= 0.5;
+          }
+          return value;
+      }
+
+      void main() {
+          vec4 baseColor = texture2D(uTexture, vTextureCoord);
+          
+          // Recreate absolute world pixel coordinate inside the GPU
+          vec2 pixelWorldPos = vec2(
+              (vScreenCoord.x - uWorldTransform.x) / uWorldTransform.z,
+              (vScreenCoord.y - uWorldTransform.y) / uWorldTransform.w
+          );
+          
+          vec2 cloudUV = vec2(pixelWorldPos.x * 0.0005, pixelWorldPos.y * 0.0015) + vec2(uTime * 0.012, uTime * 0.006);
+          
+          float n = fbm(cloudUV);
+          float cloudShadow = smoothstep(0.43, 0.72, n) * uShadowOpacity; 
+          
+          vec3 finalRGB = baseColor.rgb * (1.0 - cloudShadow);
+          gl_FragColor = vec4(finalRGB, baseColor.a);
+      }
+  `,
+
+  // Sky clouds
+  skyFragmentSrc: `
+      precision mediump float;
+      varying vec2 vTextureCoord;
+      varying vec2 vScreenCoord;
+      uniform sampler2D uTexture;
+      
+      uniform float uTime;
+      uniform vec4 uWorldTransform;
+      
+      uniform float uCloudColorR;
+      uniform float uCloudColorG;
+      uniform float uCloudColorB;
+      uniform float uCloudOpacity;
+
+      float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+      float noise(vec2 st) {
+          vec2 i = floor(st); vec2 f = fract(st);
+          float a = random(i); float b = random(i + vec2(1.0, 0.0));
+          float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+      float fbm(vec2 st) {
+          float value = 0.0; float amplitude = 0.5; vec2 shift = vec2(100.0);
+          const mat2 rot = mat2(0.87758, 0.47943, -0.47943, 0.87758);
+          for (int i = 0; i < 3; ++i) {
+              value += amplitude * noise(st);
+              st = rot * st * 2.0 + shift; amplitude *= 0.5;
+          }
+          return value;
+      }
+
+      void main() {
+          vec4 baseColor = texture2D(uTexture, vTextureCoord);
+          
+          vec2 pixelWorldPos = vec2(
+              (vScreenCoord.x - uWorldTransform.x * 0.12) / uWorldTransform.z,
+              (vScreenCoord.y - uWorldTransform.y * 0.12) / uWorldTransform.w
+          );
+          
+          vec2 cloudUV = vec2(pixelWorldPos.x * 0.00270, pixelWorldPos.y * 0.00540) + vec2(uTime * 0.016, uTime * 0.006);
+          
+          float n = fbm(cloudUV);
+          float cloudDensity = smoothstep(0.45, 0.8, n) * uCloudOpacity; 
+          
+          vec3 cloudColor = vec3(uCloudColorR, uCloudColorG, uCloudColorB);
+          vec3 finalRGB = mix(baseColor.rgb, cloudColor * baseColor.a, cloudDensity);
+          gl_FragColor = vec4(finalRGB, baseColor.a);
+      }
+  `,
+
+  /**
+   * Safely updates a uniform property on the PixiJS v8 UniformGroup and flags it as dirty.
+   * @param {string} name - Name of the uniform.
+   * @param {any} value - Value to set.
+   */
+  setUniform: function (name, value) {
+    if (!this.uniforms) return;
+
+    this.uniforms[name] = value;
+    if (this.uniforms.uniforms) {
+      this.uniforms.uniforms[name] = value;
+    }
+
+    this.uniforms.dirty = true;
+    if (typeof this.uniforms.update === "function") {
+      this.uniforms.update();
+    }
+  },
+
+  getGameTimeObj: function () {
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    try {
+      if (!gw.CWGPlayground) return null;
+      const rawDate =
+        typeof gw.CWGPlayground.getDate === "function"
+          ? gw.CWGPlayground.getDate()
+          : null;
+      const vTime =
+        typeof gw.CWGPlayground.getVirtualTime === "function"
+          ? gw.CWGPlayground.getVirtualTime()
+          : null;
+
+      if (rawDate && typeof rawDate.hour === "number")
+        return {
+          hour: rawDate.hour,
+          minute: rawDate.minute,
+          moon: rawDate.moon || 0,
+        };
+      if (rawDate && Array.isArray(rawDate.value))
+        return {
+          hour: rawDate.value[3],
+          minute: rawDate.value[4],
+          moon: rawDate.value[1] || 0,
+        };
+      if (vTime?.virtualDate?.value)
+        return {
+          hour: vTime.virtualDate.value[3],
+          minute: vTime.virtualDate.value[4],
+          moon: vTime.virtualDate.value[1] || 0,
+        };
+    } catch (err) {}
+    return null;
+  },
+
+  calculateWeatherColors: function (hour, minute, moon) {
+    const dayDuration = 90;
+    const maxDaylightTime = 60;
+    const daylightTimeDeviation = 15;
+    const minutesInDay = 1440;
+
+    const getDaylightTimeInMinutes = (m) => {
+      return (
+        dayDuration / 2 +
+        Math.sin(-Math.PI / 2 + (m * Math.PI) / 6) * daylightTimeDeviation
+      );
+    };
+
+    const getSunHeight = (m) => {
+      return getDaylightTimeInMinutes(m) / maxDaylightTime;
+    };
+
+    const k = (hour * 60 + minute) / minutesInDay;
+    const rotationInGradus = Math.round(-90 + k * 360 + 360) % 360;
+    const rotationInRadian = (rotationInGradus * Math.PI) / 180;
+    const shift =
+      (dayDuration / 2) *
+      Math.cos(rotationInRadian) *
+      (1 - getSunHeight(moon || 0));
+    const sunPosition = Math.round(rotationInGradus - shift + 360) % 360;
+
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const lerpColor = (c1, c2, t) => [
+      lerp(c1[0], c2[0], t),
+      lerp(c1[1], c2[1], t),
+      lerp(c1[2], c2[2], t),
+    ];
+
+    const NIGHT_COLOR = [0.03, 0.05, 0.12]; // Very dark blue/grey
+    const DAWN_COLOR = [0.85, 0.6, 0.65]; // Soft pink
+    const DAY_COLOR = [1.0, 1.0, 1.0]; // Bright white
+    const SUNSET_COLOR = [1.0, 0.45, 0.25]; // Orange
+
+    let color = DAY_COLOR;
+    let shadowOp = 0.32;
+    let cloudOp = 0.85;
+
+    if (sunPosition >= 340 || sunPosition < 0) {
+      // Night -> Dawn
+      const normAngle = sunPosition >= 340 ? sunPosition : sunPosition + 360;
+      const t = (normAngle - 340) / 20.0;
+      color = lerpColor(NIGHT_COLOR, DAWN_COLOR, t);
+      shadowOp = lerp(0.15, 0.05, t);
+      cloudOp = lerp(0.45, 0.65, t);
+    } else if (sunPosition >= 0 && sunPosition < 20) {
+      // Dawn -> Day
+      const t = sunPosition / 20.0;
+      color = lerpColor(DAWN_COLOR, DAY_COLOR, t);
+      shadowOp = lerp(0.05, 0.32, t);
+      cloudOp = lerp(0.65, 0.85, t);
+    } else if (sunPosition >= 20 && sunPosition < 160) {
+      // Full Day
+      color = DAY_COLOR;
+      shadowOp = 0.4;
+      cloudOp = 0.85;
+    } else if (sunPosition >= 160 && sunPosition < 180) {
+      // Day -> Sunset
+      const t = (sunPosition - 160) / 20.0;
+      color = lerpColor(DAY_COLOR, SUNSET_COLOR, t);
+      shadowOp = lerp(0.32, 0.06, t);
+      cloudOp = lerp(0.85, 0.75, t);
+    } else if (sunPosition >= 180 && sunPosition < 200) {
+      // Sunset -> Night
+      const t = (sunPosition - 180) / 20.0;
+      color = lerpColor(SUNSET_COLOR, NIGHT_COLOR, t);
+      shadowOp = lerp(0.06, 0.15, t);
+      cloudOp = lerp(0.75, 0.45, t);
+    } else {
+      // Deep Night
+      color = NIGHT_COLOR;
+      shadowOp = 0.15;
+      cloudOp = 0.45;
+    }
+
+    return { color, shadowOp, cloudOp };
+  },
+
+  init: function () {
+    if (this.filterInstance || this.loopId) this.disable();
+
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const me = gw.CWGPlayground?.me();
+
+    if (!me || !me.view || !me.view.root) {
+      logger.warn("[CWG-Bamboo Weather] Play entity not found.");
+      return;
+    }
+
+    const worldContainer = me.view.root.parent;
+    const viewport = worldContainer.parent;
+
+    if (!viewport || !viewport.children) return;
+
+    let nativeFilterInstance = null;
+    for (const child of viewport.children) {
+      const filters = child.filters ? Array.from(child.filters) : [];
+      nativeFilterInstance = filters.find(
+        (filter) =>
+          filter?.glProgram?.constructor &&
+          filter?.resources?.colorMatrixUniforms?.constructor,
+      );
+      if (nativeFilterInstance) break;
+    }
+    if (!nativeFilterInstance) return;
+
+    const FilterClass = Object.getPrototypeOf(nativeFilterInstance.constructor);
+    const GlProgramClass = nativeFilterInstance.glProgram.constructor;
+    const UniformGroupClass =
+      nativeFilterInstance.resources.colorMatrixUniforms.constructor;
+
+    this.uniforms = new UniformGroupClass({
+      uTime: { value: 0, type: "f32" },
+      uWorldTransform: { value: [0, 0, 1, 1], type: "vec4<f32>" },
+      uScreenCenter: { value: [0, 0], type: "vec2<f32>" },
+      uCloudColorR: { value: 1.0, type: "f32" },
+      uCloudColorG: { value: 1.0, type: "f32" },
+      uCloudColorB: { value: 1.0, type: "f32" },
+      uShadowOpacity: { value: 0.35, type: "f32" },
+      uCloudOpacity: { value: 0.85, type: "f32" },
+    });
+
+    const shadowProgram = new GlProgramClass({
+      vertex: this.vertexSrc,
+      fragment: this.shadowFragmentSrc,
+    });
+    const skyProgram = new GlProgramClass({
+      vertex: this.vertexSrc,
+      fragment: this.skyFragmentSrc,
+    });
+
+    this.shadowFilter = new FilterClass({
+      glProgram: shadowProgram,
+      resources: { cloudUniforms: this.uniforms },
+    });
+    this.skyFilter = new FilterClass({
+      glProgram: skyProgram,
+      resources: { cloudUniforms: this.uniforms },
+    });
+
+    this.groundContainers = [
+      viewport.children[2],
+      viewport.children[3],
+      viewport.children[4],
+    ].filter(Boolean);
+    this.skyContainers = [viewport.children[0], viewport.children[1]].filter(
+      Boolean,
+    );
+
+    this.groundContainers.forEach((container) => {
+      const existing = container.filters ? Array.from(container.filters) : [];
+      if (!existing.includes(this.shadowFilter))
+        existing.push(this.shadowFilter);
+      container.filters = existing;
+    });
+
+    this.skyContainers.forEach((container) => {
+      const existing = container.filters ? Array.from(container.filters) : [];
+      if (!existing.includes(this.skyFilter)) existing.push(this.skyFilter);
+      container.filters = existing;
+    });
+
+    this.startTime = Date.now();
+    this.tickCounter = 0;
+
+    const updateLoop = () => {
+      if (this.shadowFilter || this.skyFilter) {
+        const elapsedSeconds = (Date.now() - this.startTime) / 1000.0;
+        this.setUniform("uTime", elapsedSeconds);
+
+        const sw = gw.innerWidth || 1920;
+        const sh = gw.innerHeight || 1080;
+        this.setUniform("uScreenCenter", [sw / 2.0, sh / 2.0]);
+
+        const wt = worldContainer.worldTransform;
+        if (wt) {
+          this.setUniform("uWorldTransform", [wt.tx, wt.ty, wt.a, wt.d]);
+        }
+
+        if (this.tickCounter % 30 === 0) {
+          const gameTime = this.getGameTimeObj();
+          if (gameTime) {
+            const weather = this.calculateWeatherColors(
+              gameTime.hour,
+              gameTime.minute,
+              gameTime.moon,
+            );
+
+            this.setUniform("uCloudColorR", weather.color[0]);
+            this.setUniform("uCloudColorG", weather.color[1]);
+            this.setUniform("uCloudColorB", weather.color[2]);
+            this.setUniform("uShadowOpacity", weather.shadowOp);
+            this.setUniform("uCloudOpacity", weather.cloudOp);
+          }
+        }
+        this.tickCounter++;
+
+        this.loopId = requestAnimationFrame(updateLoop);
+      }
+    };
+    updateLoop();
+
+    logger.log(
+      "[CWG-Bamboo Weather] World-Space shader system compiled & buffer synced.",
+    );
+  },
+
+  disable: function () {
+    this.groundContainers.forEach((c) => {
+      if (c?.filters)
+        c.filters = c.filters.filter((f) => f !== this.shadowFilter);
+    });
+    this.skyContainers.forEach((c) => {
+      if (c?.filters) c.filters = c.filters.filter((f) => f !== this.skyFilter);
+    });
+
+    this.groundContainers = [];
+    this.skyContainers = [];
+
+    if (this.loopId) {
+      cancelAnimationFrame(this.loopId);
+      this.loopId = null;
+    }
+    this.shadowFilter = null;
+    this.skyFilter = null;
+    logger.log("[CWG-Bamboo Weather] Shader system disabled.");
+  },
+};
+
+// ====================================================================================================================
 //   . . . PAGE ROUTERS (TABLE OF CONTENTS) . . .
 // ====================================================================================================================
 
@@ -3655,6 +4105,12 @@ function initPlayPage() {
     document.body.classList.add("bamboo-hide-native-bubbles");
     initBambooChat();
     hookChatEngine();
+  }
+
+  if (bambooSettings.enableWeatherShader) {
+    setTimeout(() => {
+      weatherManager.init();
+    }, 2000);
   }
 
   initSettingsButton();
