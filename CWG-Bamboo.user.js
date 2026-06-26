@@ -6,7 +6,7 @@
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
 // @supportURL
-// @homepageURL
+// @homepageURL  https://ibirtem.github.io/CatWarGame-Bamboo-Pages/
 // @match        *://playtest.cw-game.ru/play*
 // @updateURL    https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @downloadURL  https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
