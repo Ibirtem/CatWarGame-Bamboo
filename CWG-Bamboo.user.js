@@ -1,17 +1,17 @@
 // ==UserScript==
-// @name         CWG-Bamboo
+// @name         CWG - Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.1.0-06.26
+// @version      v1.2.0-06.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
 // @supportURL
-// @homepageURL
+// @homepageURL  https://ibirtem.github.io/CatWarGame-Bamboo-Pages/
 // @match        *://playtest.cw-game.ru/play*
 // @updateURL    https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @downloadURL  https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @license      Apache-2.0
-// @iconURL
+// @iconURL      https://raw.githubusercontent.com/Ibirtem/CatWarGame-Bamboo/main/images/icons/bamboo.png
 // @run-at       document-start
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -30,6 +30,7 @@ const bambooDefaultSettings = {
   showTimeHUD: false,
   showDateHUD: false,
   showLocationHUD: false,
+  showActionHotbar: false,
 
   enableBambooChat: false,
   enableLogging: false,
@@ -41,6 +42,8 @@ const bambooDefaultSettings = {
   enableEventNotification: false,
 
   hudTheme: "native",
+
+  enableWeatherShader: false,
 };
 
 let bambooSettings = {};
@@ -123,6 +126,111 @@ const logger = {
 };
 
 // ====================================================================================================================
+//   . . . NETWORK MANAGER . . .
+// ====================================================================================================================
+
+const networkManager = {
+  activeSocket: null,
+
+  /**
+   * Sends a JSON packet over an active WebSocket connection.
+   * @param {Object} packet - The packet object
+   */
+  sendPacket: (packet) => {
+    if (
+      networkManager.activeSocket &&
+      networkManager.activeSocket.readyState ===
+        networkManager.activeSocket.OPEN
+    ) {
+      try {
+        const rawData = JSON.stringify(packet);
+        networkManager.activeSocket.send(rawData);
+
+        if (bambooSettings.enableNetworkLogging) {
+          console.log(`[CWG-Bamboo WS Packet OUT-BAMBOO]`, packet);
+        }
+      } catch (e) {
+        logger.error("[CWG-Bamboo] Error serializing/sending packet:", e);
+      }
+    } else {
+      logger.warn("[CWG-Bamboo] Unable to send packet: WebSocket is not open.");
+    }
+  },
+};
+
+/**
+ * Handler for incoming packets from the server.
+ */
+const packetHandlers = {
+  /**
+   * Helper function for converting a player's ID to their name.
+   */
+  _resolvePlayerName(senderId) {
+    const gameWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    let authorName = "Неизвестный";
+    let isMe = false;
+
+    if (gameWindow.CWGPlayground) {
+      const me = gameWindow.CWGPlayground.me();
+      isMe = !!(me && me.id === senderId);
+
+      const cats = gameWindow.CWGPlayground.getCats() || [];
+      const senderCat =
+        cats.find((c) => c.id === senderId) || (isMe ? me : null);
+
+      if (senderCat && senderCat.name) {
+        authorName = senderCat.name;
+      }
+    }
+
+    return { authorName, isMe };
+  },
+
+  /** MsgCode: 1001 (SimpleMessage) */
+  handleSystemMessage(packet) {
+    if (packet.payload && typeof packet.payload.message === "string") {
+      const sysMessage = packet.payload.message;
+      dispatchSystemNotification(sysMessage);
+
+      if (bambooSettings.enableNetworkLogging) {
+        console.log(`[CWG-Bamboo WS] System alert processed: "${sysMessage}"`);
+      }
+    }
+  },
+
+  /** MsgCode: 2003 (Say) */
+  handleChatMessage(packet) {
+    if (packet.payload && packet.payload.sender && packet.payload.text) {
+      const { sender, text } = packet.payload;
+      const { authorName, isMe } = this._resolvePlayerName(sender);
+
+      if (bambooSettings.enableBambooChat) {
+        addMessageToBambooChat(authorName, text, false, isMe);
+      }
+
+      if (bambooSettings.enableNetworkLogging) {
+        console.log(`[CWG-Bamboo WS] Chat from ${authorName}: "${text}"`);
+      }
+    }
+  },
+
+  /** Main distributor */
+  process(packet) {
+    if (!packet || typeof packet !== "object" || !packet.code) return;
+
+    switch (packet.code) {
+      case 1001:
+        this.handleSystemMessage(packet);
+        break;
+      case 2003:
+        this.handleChatMessage(packet);
+        break;
+    }
+  },
+};
+
+// ====================================================================================================================
 //   . . . NETWORK & CANVAS INTERCEPTORS . . .
 // ====================================================================================================================
 
@@ -142,37 +250,52 @@ const logger = {
       }
       const ws = new OriginalWebSocket(url, protocols);
 
+      ws.addEventListener("open", () => {
+        networkManager.activeSocket = ws;
+        logger.log(
+          "[CWG-Bamboo] WebSocket opened and captured by networkManager.",
+        );
+      });
+
+      ws.addEventListener("close", () => {
+        if (networkManager.activeSocket === ws) {
+          networkManager.activeSocket = null;
+          logger.log(
+            "[CWG-Bamboo] WebSocket closed. networkManager reference cleared.",
+          );
+        }
+      });
+
       ws.addEventListener("message", (event) => {
         try {
           if (typeof event.data === "string") {
             const packet = JSON.parse(event.data);
 
-            if (
-              packet &&
-              packet.code === 1001 &&
-              packet.payload &&
-              typeof packet.payload.message === "string"
-            ) {
-              const sysMessage = packet.payload.message;
-              dispatchSystemNotification(sysMessage);
-
-              if (bambooSettings.enableNetworkLogging) {
-                console.log(
-                  `[CWG-Bamboo WS] Decoded and dispatched system alert: "${sysMessage}"`,
-                );
-              }
-            }
+            packetHandlers.process(packet);
 
             if (bambooSettings.enableNetworkLogging) {
-              console.log("[CWG-Bamboo WS Packet]", packet);
+              console.log("[CWG-Bamboo WS Packet IN]", packet);
             }
           }
         } catch (e) {
           if (bambooSettings.enableNetworkLogging) {
-            console.log("[CWG-Bamboo WS Raw]", event.data);
+            console.log("[CWG-Bamboo WS Raw IN]", event.data);
           }
         }
       });
+
+      const originalSend = ws.send;
+      ws.send = function (data) {
+        if (bambooSettings.enableNetworkLogging) {
+          try {
+            const parsed = JSON.parse(data);
+            console.log("[CWG-Bamboo WS Packet OUT-NATIVE]", parsed);
+          } catch (e) {
+            console.log("[CWG-Bamboo WS Raw OUT-NATIVE]", data);
+          }
+        }
+        return originalSend.apply(this, arguments);
+      };
 
       return ws;
     };
@@ -779,7 +902,7 @@ function injectCustomStyles() {
           gap: 6px;
           margin-top: 10px;
           text-align: left;
-          max-height: 220px;
+          max-height: 300px;
           overflow-y: auto;
           padding-right: 4px;
         }
@@ -885,6 +1008,224 @@ function injectCustomStyles() {
           transform: translate(-50%, -50%);
           color: #fff;
           font-size: 12px;
+        }
+
+        /* --- ACTION HOTBAR --- */
+        #cwg-bamboo-hotbar {
+          position: fixed;
+          bottom: 20px;
+          left: 50%;
+          transform: translateX(-50%);
+          display: flex;
+          gap: 10px;
+          padding: 8px 12px;
+          z-index: 997;
+          transition: opacity 0.3s ease, transform 0.3s ease;
+        }
+
+        .bamboo-hotbar-btn {
+          width: 46px;
+          height: 46px;
+          border-radius: 12px;
+          background-color: var(--bamboo-hud-upper-bg);
+          border: 1px solid var(--bamboo-hud-upper-border);
+          color: var(--bamboo-hud-upper-text);
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          justify-content: center;
+          cursor: pointer;
+          transition: background-color 0.2s ease, transform 0.1s ease, filter 0.2s ease;
+          user-select: none;
+          position: relative;
+        }
+
+        .bamboo-hotbar-btn:hover:not(.disabled) {
+          background-color: rgba(255, 255, 255, 0.15);
+        }
+
+        .bamboo-hotbar-btn:active:not(.disabled) {
+          transform: scale(0.92);
+        }
+
+        .bamboo-hotbar-btn.disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+          filter: grayscale(100%);
+        }
+
+        .bamboo-hotbar-icon {
+          font-size: 18px;
+          line-height: 1;
+        }
+
+        .bamboo-hotbar-label {
+          font-size: 9px;
+          font-weight: 600;
+          margin-top: 4px;
+          opacity: 0.8;
+          white-space: nowrap;
+          overflow: hidden;
+          text-overflow: ellipsis;
+          max-width: 42px;
+        }
+
+        .bamboo-hotbar-divider {
+          width: 2px;
+          background-color: var(--bamboo-hud-upper-border);
+          border-radius: 2px;
+          margin: 4px 6px;
+          opacity: 0.6;
+        }
+
+        body.bamboo-hotbar-active div[class*="MuiBox-root"]:has(> div[style*="transition: opacity 800ms"]) {
+          bottom: 90px !important;
+        }
+
+        /* --- CHAT HISTORY DIVIDER --- */
+        .bamboo-chat-divider {
+          text-align: center;
+          font-size: 11px;
+          color: var(--bamboo-text-secondary);
+          margin: 8px 0;
+          position: relative;
+        }
+
+        .bamboo-chat-divider::before, .bamboo-chat-divider::after {
+          content: "";
+          position: absolute;
+          top: 50%;
+          width: 30%;
+          height: 1px;
+          background: var(--bamboo-msg-border);
+        }
+
+        .bamboo-chat-divider::before { left: 5%; }
+        .bamboo-chat-divider::after { right: 5%; }
+
+        #cwg-tc-panel {
+          position: fixed;
+          top: 70px;
+          right: 70px;
+          width: max-content; 
+          min-width: 340px; 
+          background-color: var(--bamboo-modal-bg);
+          border: 1px solid var(--bamboo-modal-border);
+          backdrop-filter: blur(var(--bamboo-modal-blur));
+          -webkit-backdrop-filter: blur(var(--bamboo-modal-blur));
+          border-radius: 12px;
+          color: var(--bamboo-text-primary);
+          font-family: "Montserrat", sans-serif;
+          z-index: 99999;
+          padding: 16px;
+          box-shadow: 0 6px 16px rgba(0,0,0,0.5);
+          display: none;
+          flex-direction: column;
+          gap: 12px;
+        }
+
+        .tc-header {
+          font-size: 14px;
+          font-weight: 600;
+          color: var(--bamboo-accent);
+          border-bottom: 1px solid var(--bamboo-modal-border);
+          padding-bottom: 8px;
+          margin: 0;
+          user-select: none;
+          cursor: move;
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+        }
+
+        .tc-close { 
+          cursor: pointer; 
+          color: var(--bamboo-text-secondary); 
+          font-size: 20px; 
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          font-family: Arial, sans-serif; 
+          width: 24px;
+          height: 24px;
+          transition: color 0.2s;
+        }
+
+        .tc-close:hover {
+          color: var(--bamboo-error);
+        }
+
+        .tc-columns {
+          display: flex;
+          gap: 12px;
+        }
+
+        .tc-col {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          background: rgba(0, 0, 0, 0.15);
+          padding: 10px;
+          border-radius: 8px;
+          border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .tc-col-title {
+          text-align: center;
+          font-size: 11px;
+          font-weight: bold;
+          margin-bottom: 4px;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+        }
+
+        .tc-date-row {
+          display: flex;
+          gap: 4px;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .tc-date-row span {
+          color: var(--bamboo-text-secondary);
+          font-size: 12px;
+          font-weight: bold;
+        }
+
+        .tc-input {
+          background: rgba(255, 255, 255, 0.05);
+          border: 1px solid var(--bamboo-modal-border);
+          color: var(--bamboo-text-primary);
+          border-radius: 4px;
+          padding: 4px;
+          font-family: monospace;
+          font-size: 12px;
+          text-align: center;
+          outline: none;
+          transition: border-color 0.2s;
+        }
+
+        .tc-input:focus {
+          border-color: var(--bamboo-accent);
+        }
+
+        .tc-sm {
+          width: 28px;
+        }
+
+        .tc-lg {
+          width: 44px;
+        }
+
+        .tc-input::-webkit-outer-spin-button,
+        .tc-input::-webkit-inner-spin-button {
+          -webkit-appearance: none;
+          margin: 0;
+        }
+
+        .tc-input[type="number"] {
+          -moz-appearance: textfield;
         }
     `;
   document.head.appendChild(style);
@@ -1561,6 +1902,14 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
             data-setting="showLocationHUD"
           />
         </div>
+        <div class="bamboo-setting-row">
+          <span>Панель действий (Хот-бар)</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showActionHotbar"
+          />
+        </div>
       </div>
 
       <!-- Chat & Communication -->
@@ -1574,6 +1923,14 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
             type="checkbox"
             class="bamboo-checkbox"
             data-setting="enableBambooChat"
+          />
+        </div>
+        <div class="bamboo-setting-row">
+          <span>История сообщений чата</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="saveChatHistory"
           />
         </div>
       </div>
@@ -1651,6 +2008,19 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
             id="custom-sounds-list"
             style="max-height: 120px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px;"
           ></div>
+        </div>
+      </div>
+
+      <!-- Graphics & Weather -->
+      <div class="bamboo-settings-category">
+        <div class="bamboo-settings-category-title">Шейдеры</div>
+        <div class="bamboo-setting-row">
+          <span>Динамические облака и тени от них, звёзды.</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableWeatherShader"
+          />
         </div>
       </div>
 
@@ -1749,6 +2119,26 @@ function bindSettingsListeners() {
         } else {
           document.body.classList.remove("bamboo-hide-native-location");
           if (locHud) locHud.style.display = "none";
+        }
+      }
+
+      if (setting === "showActionHotbar") {
+        const hotbar = document.getElementById("cwg-bamboo-hotbar");
+        if (element.checked) {
+          document.body.classList.add("bamboo-hotbar-active");
+          if (hotbar) hotbar.style.display = "flex";
+          else initHotbarHUD();
+        } else {
+          document.body.classList.remove("bamboo-hotbar-active");
+          if (hotbar) hotbar.style.display = "none";
+        }
+      }
+
+      if (setting === "enableWeatherShader") {
+        if (element.checked) {
+          weatherManager.init();
+        } else {
+          weatherManager.disable();
         }
       }
     });
@@ -2517,8 +2907,13 @@ function bindChatTabs(chatPanel) {
 function toggleBambooChat() {
   const chatPanel = document.getElementById("cwg-bamboo-chat");
   if (!chatPanel) return;
-  chatPanel.style.display =
-    chatPanel.style.display === "none" ? "flex" : "none";
+  const isHidden = chatPanel.style.display === "none";
+  chatPanel.style.display = isHidden ? "flex" : "none";
+
+  if (isHidden) {
+    const msgContainer = document.getElementById("cwg-bamboo-chat-messages");
+    if (msgContainer) msgContainer.scrollTop = msgContainer.scrollHeight;
+  }
 }
 
 /**
@@ -2551,12 +2946,32 @@ function initBambooChat() {
   document.body.appendChild(chatPanel);
   logger.log("[CWG-Bamboo] Custom Improved Chat successfully injected.");
 
+  if (bambooSettings.saveChatHistory) {
+    const history = getChatHistory();
+    if (history.length > 0) {
+      history.forEach((msg) => {
+        addMessageToBambooChat(
+          msg.author,
+          msg.text,
+          msg.isSystem,
+          msg.isMe,
+          msg.timeStr,
+        );
+      });
+
+      const msgContainer = document.getElementById("cwg-bamboo-chat-messages");
+      msgContainer.insertAdjacentHTML(
+        "beforeend",
+        `<div class="bamboo-chat-divider">Сохранённые</div>`,
+      );
+      msgContainer.scrollTop = msgContainer.scrollHeight;
+    }
+  }
+
   const handle = chatPanel.querySelector(".bamboo-resize-handle");
   makeChatResizable(chatPanel, handle);
 
   bindChatTabs(chatPanel);
-
-  observeNativeChat();
 
   document.addEventListener(
     "click",
@@ -2577,63 +2992,20 @@ function initBambooChat() {
 }
 
 /**
- * Hooks into the prototype of the game's Cat entity to intercept peer chat events.
- * Correctly maps parameters to resolve the issue where IDs were displayed as messages.
+ * Escapes HTML special characters to protect against XSS. Why not?
  */
-async function hookChatEngine() {
-  const gameWindow =
-    typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-  let me = null;
-
-  logger.log(
-    "[CWG-Bamboo] Waiting for controllable entity to spawn before hooking speech...",
+function escapeBambooChatHTML(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[char],
   );
-
-  while (!me) {
-    if (
-      gameWindow.CWGPlayground &&
-      typeof gameWindow.CWGPlayground.me === "function"
-    ) {
-      me = gameWindow.CWGPlayground.me();
-    }
-    if (!me) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
-
-  const CatProto = Object.getPrototypeOf(me);
-
-  if (
-    CatProto &&
-    typeof CatProto.say === "function" &&
-    !CatProto.say.__bambooHooked
-  ) {
-    const originalSay = CatProto.say;
-
-    CatProto.say = function (message) {
-      try {
-        if (bambooSettings.enableBambooChat) {
-          const myId = gameWindow.CWGPlayground?.me()?.id;
-          const isMe = this.id === myId;
-
-          addMessageToBambooChat(
-            this.name || "Неизвестный",
-            message,
-            false,
-            isMe,
-          );
-        }
-      } catch (err) {
-        logger.error("[CWG-Bamboo] Error in hooked say():", err);
-      }
-      return originalSay.apply(this, arguments);
-    };
-
-    CatProto.say.__bambooHooked = true;
-    logger.log(
-      "[CWG-Bamboo] Native Cat.say() successfully patched! Backup speech interceptor is live.",
-    );
-  }
 }
 
 /**
@@ -2645,102 +3017,51 @@ async function hookChatEngine() {
  * @param {boolean} [isSystem=false] - Whether this is an in-game system notification.
  * @param {boolean} [isMe=false] - Whether the message originates from the local player.
  */
-function addMessageToBambooChat(author, text, isSystem = false, isMe = false) {
+function addMessageToBambooChat(
+  author,
+  text,
+  isSystem = false,
+  isMe = false,
+  timeOverride = null,
+) {
   const msgContainer = document.getElementById("cwg-bamboo-chat-messages");
   if (!msgContainer) return;
 
   const now = new Date();
-  const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const timeStr =
+    timeOverride ||
+    `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+  if (!timeOverride && bambooSettings.saveChatHistory) {
+    pushToChatHistory({ author, text, isSystem, isMe, timeStr });
+  }
+
+  const safeTimeStr = escapeBambooChatHTML(timeStr);
+  const safeAuthor = escapeBambooChatHTML(author);
+  const safeText = escapeBambooChatHTML(text);
 
   let messageHTML = "";
 
   if (isSystem) {
     messageHTML = `
       <div class="bamboo-chat-msg system">
-        <span class="time">[${timeStr}]</span>
-        <span class="text">${text}</span>
+        <span class="time">[${safeTimeStr}]</span>
+        <span class="text">${safeText}</span>
       </div>
     `;
   } else {
     const selfClass = isMe ? " self" : "";
     messageHTML = `
       <div class="bamboo-chat-msg${selfClass}">
-        <span class="time">[${timeStr}]</span>
-        <span class="author">${author}</span>: 
-        <span class="text">${text}</span>
+        <span class="time">[${safeTimeStr}]</span>
+        <span class="author">${safeAuthor}</span>: 
+        <span class="text">${safeText}</span>
       </div>
     `;
   }
 
   msgContainer.insertAdjacentHTML("beforeend", messageHTML);
   msgContainer.scrollTop = msgContainer.scrollHeight;
-}
-
-/**
- * Monitors the native (hidden) chat UI for changes.
- * Integrates intercepted messages into the custom chat while maintaining visual alignment.
- */
-function observeNativeChat() {
-  const nativeDrawerSelector = ".MuiDrawer-root";
-  logger.log(
-    `[CWG-Bamboo] Setting up native chat observer on: "${nativeDrawerSelector}"`,
-  );
-
-  setupSingleCallback(nativeDrawerSelector, (drawer) => {
-    logger.log(
-      "[CWG-Bamboo] Target MuiDrawer-root found! Hiding and hooking MutationObserver...",
-    );
-
-    document.body.classList.add("bamboo-hide-native-chat");
-
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
-          mutation.addedNodes.forEach((node) => {
-            if (node.nodeType !== 1) return;
-
-            const authorSpan = node.querySelector("span");
-            const textParagraph = node.querySelector("p");
-
-            if (authorSpan && textParagraph) {
-              const author = authorSpan.textContent.trim();
-              const text = textParagraph.textContent.trim();
-
-              const gameWindow =
-                typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-              const myName = gameWindow.CWGPlayground?.me()?.name;
-              const isMe = author === myName;
-
-              addMessageToBambooChat(author, text, false, isMe);
-            } else {
-              const systemSpan = node.querySelector("span");
-              if (systemSpan) {
-                const text = systemSpan.textContent.trim();
-
-                if (
-                  text !== "События" &&
-                  text !== "Локальный чат" &&
-                  text !== "Чат" &&
-                  text !== "Мяукни что-нибудь"
-                ) {
-                  addMessageToBambooChat(null, text, true);
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-
-    observer.observe(drawer, {
-      childList: true,
-      subtree: true,
-    });
-
-    logger.log(
-      "[CWG-Bamboo] MutationObserver successfully hooked to native hidden chat.",
-    );
-  });
 }
 
 /**
@@ -2792,6 +3113,1070 @@ function makeChatResizable(chatPanel, handle) {
   handle.addEventListener("mousedown", onMouseDown);
 }
 
+/**
+ * Gets chat history from a separate storage slot
+ */
+function getChatHistory() {
+  try {
+    let stored = null;
+    if (typeof GM_getValue !== "undefined") {
+      stored = GM_getValue("bamboo_chatHistory", null);
+    } else {
+      const localStored = localStorage.getItem("bamboo_chatHistory");
+      if (localStored) stored = JSON.parse(localStored);
+    }
+    return Array.isArray(stored) ? stored : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+/**
+ * Saves history (max 50 messages)
+ */
+function saveChatHistoryToDB(historyArray) {
+  try {
+    if (historyArray.length > 50) {
+      historyArray = historyArray.slice(-50);
+    }
+    if (typeof GM_setValue !== "undefined") {
+      GM_setValue("bamboo_chatHistory", historyArray);
+    } else {
+      localStorage.setItem("bamboo_chatHistory", JSON.stringify(historyArray));
+    }
+  } catch (err) {
+    logger.error("[CWG-Bamboo] Failed to save chat history:", err);
+  }
+}
+
+/**
+ * Pushes a new message to the repository if the setting is enabled
+ */
+function pushToChatHistory(msgData) {
+  if (!bambooSettings.saveChatHistory) return;
+  const history = getChatHistory();
+  history.push(msgData);
+  saveChatHistoryToDB(history);
+}
+
+// ====================================================================================================================
+//   . . . ACTION HOTBAR LOGIC . . .
+// ====================================================================================================================
+
+function initHotbarActions() {
+  hotbarManager.registerAction("action_sit", "🐾", "Сесть", () => {
+    networkManager.sendPacket({ code: 2021 });
+  });
+
+  hotbarManager.registerAction("action_sleep", "💤", "Спать", () => {
+    networkManager.sendPacket({ code: 2016, payload: {} });
+  });
+
+  hotbarManager.registerAction("action_lick_self", "🩹", "Вылизаться", () => {
+    const gameWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const me = gameWindow.CWGPlayground?.me();
+
+    if (me && me.id) {
+      networkManager.sendPacket({ code: 2012, payload: { licked: me.id } });
+    } else {
+      logger.warn("[CWG-Bamboo] Unable to get your ID for licking.");
+    }
+  });
+
+  hotbarManager.registerAction(
+    "tool_timecalc",
+    "🧮",
+    "Время",
+    toggleTimeCalculator,
+    "tool",
+  );
+}
+
+// ====================================================================================================================
+//   . . . ACTION HOTBAR MANAGEMENT . . .
+// ====================================================================================================================
+
+const hotbarManager = {
+  actions: [],
+
+  /**
+   * Registers a new button in the hotbar.
+   * @param {string} id - Unique identifier
+   * @param {string} icon - Emoji or icon text
+   * @param {string} label - Icon caption
+   * @param {Function} callback - Function called on click
+   * @param {string} type - 'action' (default) or 'tool' (for utility windows)
+   */
+  registerAction: function (id, icon, label, callback, type = "action") {
+    const existing = this.actions.find((a) => a.id === id);
+    if (existing) {
+      existing.icon = icon;
+      existing.label = label;
+      existing.callback = callback;
+      existing.type = type;
+    } else {
+      this.actions.push({ id, icon, label, callback, type, disabled: false });
+    }
+    this.render();
+  },
+
+  /**
+   * Locks or unlocks a button (e.g., when the action is impossible).
+   */
+  setDisabled: function (id, isDisabled) {
+    const action = this.actions.find((a) => a.id === id);
+    if (action && action.disabled !== isDisabled) {
+      action.disabled = isDisabled;
+      this.render();
+    }
+  },
+
+  /**
+   * Re-renders the hotbar.
+   */
+  render: function () {
+    const container = document.getElementById("cwg-bamboo-hotbar");
+    if (!container) return;
+
+    container.innerHTML = "";
+
+    if (this.actions.length === 0) {
+      const placeholder = document.createElement("div");
+      placeholder.className = "bamboo-hotbar-btn disabled";
+      placeholder.title = "Пока нет доступных действий";
+      placeholder.innerHTML = `
+        <div class="bamboo-hotbar-icon">🫙</div>
+        <div class="bamboo-hotbar-label">Пусто :(</div>
+      `;
+      container.appendChild(placeholder);
+      return;
+    }
+
+    const actions = this.actions.filter((a) => a.type === "action");
+    const tools = this.actions.filter((a) => a.type === "tool");
+
+    const renderBtn = (action) => {
+      const btn = document.createElement("div");
+      btn.className =
+        "bamboo-hotbar-btn" + (action.disabled ? " disabled" : "");
+      btn.title = action.label;
+      btn.innerHTML = `
+        <div class="bamboo-hotbar-icon">${action.icon}</div>
+        <div class="bamboo-hotbar-label">${action.label}</div>
+      `;
+
+      btn.addEventListener("click", () => {
+        if (!action.disabled && typeof action.callback === "function") {
+          action.callback();
+        }
+      });
+      container.appendChild(btn);
+    };
+
+    actions.forEach(renderBtn);
+
+    if (actions.length > 0 && tools.length > 0) {
+      const divider = document.createElement("div");
+      divider.className = "bamboo-hotbar-divider";
+      container.appendChild(divider);
+    }
+
+    tools.forEach(renderBtn);
+  },
+};
+
+// ====================================================================================================================
+//   . . . TIME CALCULATOR . . .
+// ====================================================================================================================
+
+/**
+ * Virtual time:
+ * A game day lasts 90 minutes, of which the sun is above the horizon for 30 to 60 minutes.
+ * Depending on the time of year, daylight hours are calculated using the formula:
+ * f(x) = 45 + sin(-π/2 + x*π/6) * 15, where x is the current month.
+ * Thus, 1 virtual minute = 3.75 seconds in real time.
+ */
+const timeCalculator = {
+  isFirstOpen: true,
+  baseGameTime: 0,
+  baseRealTime: 0,
+  ratio: 120 / 1440,
+  isUpdatingUI: false,
+
+  initUI: function () {
+    if (document.getElementById("cwg-tc-panel")) return;
+
+    const panel = document.createElement("div");
+    panel.id = "cwg-tc-panel";
+    panel.innerHTML = /* HTML */ `
+      <div class="tc-header" id="tc-drag-handle">
+        <span>⏳ Калькулятор Времени</span>
+        <span class="tc-close" id="tc-close-btn" title="Закрыть">&times;</span>
+      </div>
+      <div class="tc-columns">
+        <div class="tc-col">
+          <div class="tc-col-title" style="color: var(--bamboo-warning)">
+            Игровое (День.Мес.Год)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="g-day"
+              class="tc-input tc-sm"
+              title="День"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="g-month"
+              class="tc-input tc-sm"
+              title="Месяц"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="g-year"
+              class="tc-input tc-lg"
+              title="Год"
+            />
+          </div>
+          <div
+            class="tc-col-title"
+            style="color: var(--bamboo-warning); margin-top: 4px"
+          >
+            Время (Час:Мин)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="g-hour"
+              class="tc-input tc-sm"
+              title="Час"
+            />
+            <span>:</span>
+            <input
+              type="number"
+              id="g-minute"
+              class="tc-input tc-sm"
+              title="Минута"
+            />
+          </div>
+        </div>
+        <div
+          style="
+            display: flex;
+            align-items: center;
+            color: rgba(255, 255, 255, 0.2);
+            font-size: 18px;
+            font-weight: bold;
+          "
+        >
+          ⇄
+        </div>
+        <div class="tc-col">
+          <div class="tc-col-title" style="color: var(--bamboo-accent)">
+            Реальное (День.Мес.Год)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="r-day"
+              class="tc-input tc-sm"
+              title="День"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="r-month"
+              class="tc-input tc-sm"
+              title="Месяц"
+            />
+            <span>.</span>
+            <input
+              type="number"
+              id="r-year"
+              class="tc-input tc-lg"
+              title="Год"
+            />
+          </div>
+          <div
+            class="tc-col-title"
+            style="color: var(--bamboo-accent); margin-top: 4px"
+          >
+            Время (Час:Мин)
+          </div>
+          <div class="tc-date-row">
+            <input
+              type="number"
+              id="r-hour"
+              class="tc-input tc-sm"
+              title="Час"
+            />
+            <span>:</span>
+            <input
+              type="number"
+              id="r-minute"
+              class="tc-input tc-sm"
+              title="Минута"
+            />
+          </div>
+        </div>
+      </div>
+      <div
+        class="bamboo-btn"
+        id="tc-sync-btn"
+        style="text-align: center; margin-top: 4px"
+      >
+        ⟳ Синхронизировать с игрой
+      </div>
+      <div
+        style="
+            font-size: 10px;
+            color: var(--bamboo-text-secondary);
+            text-align: center;
+            margin-top: -2px;
+          "
+        id="tc-ratio-info"
+      >
+        Ожидание данных сервера...
+      </div>
+    `;
+    document.body.appendChild(panel);
+
+    document.getElementById("tc-close-btn").addEventListener("click", () => {
+      panel.style.display = "none";
+    });
+
+    document
+      .getElementById("tc-sync-btn")
+      .addEventListener("click", this.syncWithCurrentTime.bind(this));
+
+    const updateFromGame = this.calculateFromGame.bind(this);
+    const updateFromReal = this.calculateFromReal.bind(this);
+
+    ["g-year", "g-month", "g-day", "g-hour", "g-minute"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", updateFromGame);
+    });
+    ["r-year", "r-month", "r-day", "r-hour", "r-minute"].forEach((id) => {
+      document.getElementById(id).addEventListener("input", updateFromReal);
+    });
+
+    this.makeDraggable(panel, document.getElementById("tc-drag-handle"));
+  },
+
+  fetchRatio: function () {
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    try {
+      if (gw.CWGPlayground) {
+        const vt = gw.CWGPlayground.getVirtualTime();
+        if (vt && vt.dayDuration) {
+          this.ratio = vt.dayDuration / 1440;
+          return vt.dayDuration;
+        }
+      }
+    } catch (e) {}
+    this.ratio = 90 / 1440;
+    return 90;
+  },
+
+  renderDatesToUI: function (dateGame, dateReal) {
+    if (isNaN(dateGame.getTime()) || isNaN(dateReal.getTime())) return;
+    this.isUpdatingUI = true;
+
+    const pad = (num) => String(num).padStart(2, "0");
+
+    document.getElementById("g-year").value = dateGame.getFullYear();
+    document.getElementById("g-month").value = pad(dateGame.getMonth() + 1);
+    document.getElementById("g-day").value = pad(dateGame.getDate());
+    document.getElementById("g-hour").value = pad(dateGame.getHours());
+    document.getElementById("g-minute").value = pad(dateGame.getMinutes());
+
+    document.getElementById("r-year").value = dateReal.getFullYear();
+    document.getElementById("r-month").value = pad(dateReal.getMonth() + 1);
+    document.getElementById("r-day").value = pad(dateReal.getDate());
+    document.getElementById("r-hour").value = pad(dateReal.getHours());
+    document.getElementById("r-minute").value = pad(dateReal.getMinutes());
+
+    this.isUpdatingUI = false;
+  },
+
+  calculateFromGame: function () {
+    if (this.isUpdatingUI || this.baseGameTime === 0) return;
+    const getInt = (id, fallback) =>
+      isNaN(parseInt(document.getElementById(id).value))
+        ? fallback
+        : parseInt(document.getElementById(id).value);
+
+    const newG = new Date(0);
+    newG.setFullYear(
+      getInt("g-year", 1),
+      getInt("g-month", 1) - 1,
+      getInt("g-day", 1),
+    );
+    newG.setHours(getInt("g-hour", 0), getInt("g-minute", 0), 0, 0);
+
+    const diffGameMs = newG.getTime() - this.baseGameTime;
+    const diffRealMs = diffGameMs * this.ratio;
+
+    const newR = new Date(this.baseRealTime + diffRealMs);
+    this.renderDatesToUI(newG, newR);
+  },
+
+  calculateFromReal: function () {
+    if (this.isUpdatingUI || this.baseRealTime === 0) return;
+    const getInt = (id, fallback) =>
+      isNaN(parseInt(document.getElementById(id).value))
+        ? fallback
+        : parseInt(document.getElementById(id).value);
+
+    const newR = new Date(0);
+    newR.setFullYear(
+      getInt("r-year", 1),
+      getInt("r-month", 1) - 1,
+      getInt("r-day", 1),
+    );
+    newR.setHours(getInt("r-hour", 0), getInt("r-minute", 0), 0, 0);
+
+    const diffRealMs = newR.getTime() - this.baseRealTime;
+    const diffGameMs = diffRealMs / this.ratio;
+
+    const newG = new Date(this.baseGameTime + diffGameMs);
+    this.renderDatesToUI(newG, newR);
+  },
+
+  syncWithCurrentTime: function () {
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const infoLabel = document.getElementById("tc-ratio-info");
+
+    if (!gw.CWGPlayground) {
+      infoLabel.innerText = "❌ Зайдите в мир для синхронизации";
+      infoLabel.style.color = "var(--bamboo-error)";
+      return;
+    }
+
+    const dayDur = this.fetchRatio();
+    const rawDate =
+      typeof gw.CWGPlayground.getDate === "function"
+        ? gw.CWGPlayground.getDate()
+        : null;
+    const vTime =
+      typeof gw.CWGPlayground.getVirtualTime === "function"
+        ? gw.CWGPlayground.getVirtualTime()
+        : null;
+
+    let y = 0,
+      m = 0,
+      d = 0,
+      h = 0,
+      min = 0;
+
+    if (rawDate && typeof rawDate.year === "number") {
+      y = rawDate.year;
+      m = rawDate.moon;
+      d = rawDate.date;
+    } else if (
+      rawDate &&
+      Array.isArray(rawDate.value) &&
+      rawDate.value.length >= 5
+    ) {
+      y = rawDate.value[0];
+      m = rawDate.value[1];
+      d = rawDate.value[2];
+    } else if (
+      vTime &&
+      vTime.virtualDate &&
+      Array.isArray(vTime.virtualDate.value)
+    ) {
+      y = vTime.virtualDate.value[0];
+      m = vTime.virtualDate.value[1];
+      d = vTime.virtualDate.value[2];
+    } else {
+      infoLabel.innerText = "❌ Не удалось прочитать дату";
+      infoLabel.style.color = "var(--bamboo-error)";
+      return;
+    }
+
+    if (
+      rawDate &&
+      typeof rawDate.hour === "number" &&
+      typeof rawDate.minute === "number"
+    ) {
+      h = rawDate.hour;
+      min = rawDate.minute;
+    } else if (
+      rawDate &&
+      Array.isArray(rawDate.value) &&
+      rawDate.value.length >= 5
+    ) {
+      h = rawDate.value[3];
+      min = rawDate.value[4];
+    } else if (
+      vTime &&
+      vTime.virtualDate &&
+      Array.isArray(vTime.virtualDate.value)
+    ) {
+      h = vTime.virtualDate.value[3];
+      min = vTime.virtualDate.value[4];
+    }
+
+    const currentG = new Date(0);
+    currentG.setFullYear(y + 1, m, d + 1);
+    currentG.setHours(h, min, 0, 0);
+
+    this.baseGameTime = currentG.getTime();
+    this.baseRealTime = new Date().getTime();
+
+    infoLabel.innerText = `Синхронизировано (1 игр. день = ${dayDur} реал. мин)`;
+    infoLabel.style.color = "var(--bamboo-text-secondary)";
+
+    this.renderDatesToUI(currentG, new Date(this.baseRealTime));
+  },
+
+  makeDraggable: function (panel, handle) {
+    let pos1 = 0,
+      pos2 = 0,
+      pos3 = 0,
+      pos4 = 0;
+
+    const onMouseDown = (e) => {
+      if (e.target.id === "tc-close-btn") return;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+      document.addEventListener("mouseup", closeDragElement);
+      document.addEventListener("mousemove", elementDrag);
+    };
+
+    const elementDrag = (e) => {
+      pos1 = pos3 - e.clientX;
+      pos2 = pos4 - e.clientY;
+      pos3 = e.clientX;
+      pos4 = e.clientY;
+
+      let newTop = panel.offsetTop - pos2;
+      let newLeft = panel.offsetLeft - pos1;
+
+      const maxLeft = window.innerWidth - panel.offsetWidth;
+      const maxTop = window.innerHeight - panel.offsetHeight;
+
+      if (newLeft < 0) newLeft = 0;
+      if (newTop < 0) newTop = 0;
+      if (newLeft > maxLeft) newLeft = maxLeft;
+      if (newTop > maxTop) newTop = maxTop;
+
+      panel.style.top = newTop + "px";
+      panel.style.left = newLeft + "px";
+      panel.style.right = "auto";
+    };
+
+    function closeDragElement() {
+      document.removeEventListener("mouseup", closeDragElement);
+      document.removeEventListener("mousemove", elementDrag);
+    }
+
+    handle.addEventListener("mousedown", onMouseDown);
+  },
+
+  togglePanel: function () {
+    const panel = document.getElementById("cwg-tc-panel");
+    if (!panel) return;
+    const isHidden =
+      panel.style.display === "none" || panel.style.display === "";
+    panel.style.display = isHidden ? "flex" : "none";
+
+    if (isHidden && this.isFirstOpen) {
+      this.syncWithCurrentTime();
+      this.isFirstOpen = false;
+    }
+  },
+};
+
+function toggleTimeCalculator() {
+  if (!document.getElementById("cwg-tc-panel")) {
+    timeCalculator.initUI();
+  }
+  timeCalculator.togglePanel();
+}
+
+/**
+ * Initializes and embeds the action bar into the DOM.
+ */
+function initHotbarHUD() {
+  if (!bambooSettings.showActionHotbar) return;
+  if (document.getElementById("cwg-bamboo-hotbar")) return;
+
+  const hotbar = document.createElement("div");
+  hotbar.id = "cwg-bamboo-hotbar";
+  hotbar.className = "glass-panel";
+  document.body.appendChild(hotbar);
+
+  hotbarManager.render();
+  logger.log("[CWG-Bamboo] Action Hotbar initialized.");
+
+  initHotbarActions();
+}
+
+// ====================================================================================================================
+//   . . . WEATHER & SHADER MANAGER . . .
+// ====================================================================================================================
+
+/**
+ * Manages the dynamic WebGL shader overlays for the game world.
+ * Uses exact inverse world-transform matrices to lock ground shadows to the terrain.
+ */
+const weatherManager = {
+  shadowFilter: null,
+  skyFilter: null,
+  uniforms: null,
+  startTime: 0,
+  loopId: null,
+  groundContainers: [],
+  skyContainers: [],
+  tickCounter: 0,
+
+  // WebGL1/2 Vertex
+  vertexSrc: `
+      precision highp float;
+      attribute vec2 aPosition;
+      varying vec2 vTextureCoord;
+      varying vec2 vScreenCoord;
+
+      uniform vec4 uInputSize;
+      uniform vec4 uOutputFrame;
+      uniform vec4 uOutputTexture;
+      
+      void main(void) {
+          vScreenCoord = aPosition * uOutputFrame.zw + uOutputFrame.xy;
+
+          vec2 position = vScreenCoord;
+          position.x = position.x * (2.0 / uOutputTexture.x) - 1.0;
+          position.y = position.y * (2.0 * uOutputTexture.z / uOutputTexture.y) - uOutputTexture.z;
+          gl_Position = vec4(position, 0.0, 1.0);
+          vTextureCoord = aPosition * (uOutputFrame.zw * uInputSize.zw);
+      }
+  `,
+
+  // Ground shadows
+  shadowFragmentSrc: `
+      precision mediump float;
+      varying vec2 vTextureCoord;
+      varying vec2 vScreenCoord;
+      uniform sampler2D uTexture;
+      
+      uniform float uTime;
+      uniform vec4 uWorldTransform; // [tx, ty, scaleX, scaleY] - Camera translation matrix
+      uniform float uShadowOpacity;
+
+      float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+      float noise(vec2 st) {
+          vec2 i = floor(st); vec2 f = fract(st);
+          float a = random(i); float b = random(i + vec2(1.0, 0.0));
+          float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+      float fbm(vec2 st) {
+          float value = 0.0; float amplitude = 0.5; vec2 shift = vec2(100.0);
+          const mat2 rot = mat2(0.87758, 0.47943, -0.47943, 0.87758);
+          for (int i = 0; i < 2; ++i) {
+              value += amplitude * noise(st);
+              st = rot * st * 2.0 + shift; amplitude *= 0.5;
+          }
+          return value;
+      }
+
+      void main() {
+          vec4 baseColor = texture2D(uTexture, vTextureCoord);
+          
+          // Recreate absolute world pixel coordinate inside the GPU
+          vec2 pixelWorldPos = vec2(
+              (vScreenCoord.x - uWorldTransform.x) / uWorldTransform.z,
+              (vScreenCoord.y - uWorldTransform.y) / uWorldTransform.w
+          );
+          
+          vec2 cloudUV = vec2(pixelWorldPos.x * 0.0005, pixelWorldPos.y * 0.0015) + vec2(uTime * 0.012, uTime * 0.006);
+          
+          float n = fbm(cloudUV);
+          float cloudShadow = smoothstep(0.43, 0.72, n) * uShadowOpacity; 
+          
+          vec3 finalRGB = baseColor.rgb * (1.0 - cloudShadow);
+          gl_FragColor = vec4(finalRGB, baseColor.a);
+      }
+  `,
+
+  // Sky clouds
+  skyFragmentSrc: `
+      precision mediump float;
+      varying vec2 vTextureCoord;
+      varying vec2 vScreenCoord;
+      uniform sampler2D uTexture;
+      
+      uniform float uTime;
+      uniform vec4 uWorldTransform;
+      
+      uniform float uCloudColorR;
+      uniform float uCloudColorG;
+      uniform float uCloudColorB;
+      uniform float uCloudOpacity;
+
+      float random(vec2 st) { return fract(sin(dot(st.xy, vec2(12.9898, 78.233))) * 43758.5453123); }
+      float noise(vec2 st) {
+          vec2 i = floor(st); vec2 f = fract(st);
+          float a = random(i); float b = random(i + vec2(1.0, 0.0));
+          float c = random(i + vec2(0.0, 1.0)); float d = random(i + vec2(1.0, 1.0));
+          vec2 u = f * f * (3.0 - 2.0 * f);
+          return mix(a, b, u.x) + (c - a) * u.y * (1.0 - u.x) + (d - b) * u.x * u.y;
+      }
+      float fbm(vec2 st) {
+          float value = 0.0; float amplitude = 0.5; vec2 shift = vec2(100.0);
+          const mat2 rot = mat2(0.87758, 0.47943, -0.47943, 0.87758);
+          for (int i = 0; i < 3; ++i) {
+              value += amplitude * noise(st);
+              st = rot * st * 2.0 + shift; amplitude *= 0.5;
+          }
+          return value;
+      }
+
+      float stars(vec2 uv, float time) {
+          vec2 starUV = mod(uv * 0.06, 100.0); 
+          vec2 grid = floor(starUV);
+          float r = random(grid);
+          
+          float threshold = smoothstep(0.973, 0.978, r);
+          
+          vec2 f = fract(starUV) - 0.5;
+          vec2 offset = vec2(fract(r * 13.1), fract(r * 123.4)) - 0.5;
+          float d = length(f - offset);
+          
+          float size = 0.13 + 0.14 * fract(r * 1000.0);
+          float star = (1.0 - smoothstep(size * 0.1, size, d)) * threshold;
+          
+          float speed = 0.2 + fract(r * 789.12) * 0.5;
+          float phase = fract(r * 1234.56) * 6.28;
+          float twinkle = 0.6 + 0.4 * sin(time * speed + phase);
+          return star * twinkle;
+      }
+
+      void main() {
+          vec4 baseColor = texture2D(uTexture, vTextureCoord);
+          
+          vec2 starWorldPos = vec2(
+              (vScreenCoord.x - uWorldTransform.x * 0.03) / uWorldTransform.z,
+              (vScreenCoord.y - uWorldTransform.y * 0.03) / uWorldTransform.w
+          );
+
+          vec2 skyWorldPos = vec2(
+              (vScreenCoord.x - uWorldTransform.x * 0.12) / uWorldTransform.z,
+              (vScreenCoord.y - uWorldTransform.y * 0.12) / uWorldTransform.w
+          );
+          
+          vec2 cloudUV = vec2(skyWorldPos.x * 0.00270, skyWorldPos.y * 0.00540) + vec2(uTime * 0.016, uTime * 0.006);
+          
+          float n = fbm(cloudUV);
+          float cloudDensity = smoothstep(0.45, 0.8, n) * uCloudOpacity; 
+          
+          float starVal = stars(starWorldPos, uTime);
+          float starVisibility = 1.0 - smoothstep(0.1, 0.4, uCloudColorR);
+          vec3 skyWithStars = baseColor.rgb + vec3(starVal * starVisibility * baseColor.a);
+          
+          vec3 cloudColor = vec3(uCloudColorR, uCloudColorG, uCloudColorB);
+          vec3 finalRGB = mix(skyWithStars, cloudColor * baseColor.a, cloudDensity);
+          gl_FragColor = vec4(finalRGB, baseColor.a);
+      }
+  `,
+
+  /**
+   * Safely updates a uniform property on the PixiJS v8 UniformGroup and flags it as dirty.
+   * @param {string} name - Name of the uniform.
+   * @param {any} value - Value to set.
+   */
+  setUniform: function (name, value) {
+    if (!this.uniforms) return;
+
+    this.uniforms[name] = value;
+    if (this.uniforms.uniforms) {
+      this.uniforms.uniforms[name] = value;
+    }
+
+    this.uniforms.dirty = true;
+    if (typeof this.uniforms.update === "function") {
+      this.uniforms.update();
+    }
+  },
+
+  getGameTimeObj: function () {
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    try {
+      if (!gw.CWGPlayground) return null;
+      const rawDate =
+        typeof gw.CWGPlayground.getDate === "function"
+          ? gw.CWGPlayground.getDate()
+          : null;
+      const vTime =
+        typeof gw.CWGPlayground.getVirtualTime === "function"
+          ? gw.CWGPlayground.getVirtualTime()
+          : null;
+
+      if (rawDate && typeof rawDate.hour === "number")
+        return {
+          hour: rawDate.hour,
+          minute: rawDate.minute,
+          moon: rawDate.moon || 0,
+        };
+      if (rawDate && Array.isArray(rawDate.value))
+        return {
+          hour: rawDate.value[3],
+          minute: rawDate.value[4],
+          moon: rawDate.value[1] || 0,
+        };
+      if (vTime?.virtualDate?.value)
+        return {
+          hour: vTime.virtualDate.value[3],
+          minute: vTime.virtualDate.value[4],
+          moon: vTime.virtualDate.value[1] || 0,
+        };
+    } catch (err) {}
+    return null;
+  },
+
+  calculateWeatherColors: function (hour, minute, moon) {
+    const dayDuration = 90;
+    const maxDaylightTime = 60;
+    const daylightTimeDeviation = 15;
+    const minutesInDay = 1440;
+
+    const getDaylightTimeInMinutes = (m) => {
+      return (
+        dayDuration / 2 +
+        Math.sin(-Math.PI / 2 + (m * Math.PI) / 6) * daylightTimeDeviation
+      );
+    };
+
+    const getSunHeight = (m) => {
+      return getDaylightTimeInMinutes(m) / maxDaylightTime;
+    };
+
+    const k = (hour * 60 + minute) / minutesInDay;
+    const rotationInGradus = Math.round(-90 + k * 360 + 360) % 360;
+    const rotationInRadian = (rotationInGradus * Math.PI) / 180;
+    const shift =
+      (dayDuration / 2) *
+      Math.cos(rotationInRadian) *
+      (1 - getSunHeight(moon || 0));
+    const sunPosition = Math.round(rotationInGradus - shift + 360) % 360;
+
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const lerpColor = (c1, c2, t) => [
+      lerp(c1[0], c2[0], t),
+      lerp(c1[1], c2[1], t),
+      lerp(c1[2], c2[2], t),
+    ];
+
+    const NIGHT_COLOR = [0.1, 0.2, 0.4]; // Very dark blue/grey
+    const DAWN_COLOR = [0.85, 0.6, 0.65]; // Soft pink
+    const DAY_COLOR = [1.0, 1.0, 1.0]; // Bright white
+    const SUNSET_COLOR = [1.0, 0.45, 0.25]; // Orange
+
+    let color = DAY_COLOR;
+    let shadowOp = 0.32;
+    let cloudOp = 0.85;
+
+    if (sunPosition >= 340 || sunPosition < 0) {
+      // Night -> Dawn
+      const normAngle = sunPosition >= 340 ? sunPosition : sunPosition + 360;
+      const t = (normAngle - 340) / 20.0;
+      color = lerpColor(NIGHT_COLOR, DAWN_COLOR, t);
+      shadowOp = lerp(0.15, 0.05, t);
+      cloudOp = lerp(0.45, 0.65, t);
+    } else if (sunPosition >= 0 && sunPosition < 20) {
+      // Dawn -> Day
+      const t = sunPosition / 20.0;
+      color = lerpColor(DAWN_COLOR, DAY_COLOR, t);
+      shadowOp = lerp(0.05, 0.32, t);
+      cloudOp = lerp(0.65, 0.85, t);
+    } else if (sunPosition >= 20 && sunPosition < 160) {
+      // Full Day
+      color = DAY_COLOR;
+      shadowOp = 0.6;
+      cloudOp = 0.85;
+    } else if (sunPosition >= 160 && sunPosition < 180) {
+      // Day -> Sunset
+      const t = (sunPosition - 160) / 20.0;
+      color = lerpColor(DAY_COLOR, SUNSET_COLOR, t);
+      shadowOp = lerp(0.32, 0.06, t);
+      cloudOp = lerp(0.85, 0.75, t);
+    } else if (sunPosition >= 180 && sunPosition < 200) {
+      // Sunset -> Night
+      const t = (sunPosition - 180) / 20.0;
+      color = lerpColor(SUNSET_COLOR, NIGHT_COLOR, t);
+      shadowOp = lerp(0.06, 0.15, t);
+      cloudOp = lerp(0.75, 0.45, t);
+    } else {
+      // Deep Night
+      color = NIGHT_COLOR;
+      shadowOp = 0.15;
+      cloudOp = 0.45;
+    }
+
+    return { color, shadowOp, cloudOp };
+  },
+
+  init: function () {
+    if (this.filterInstance || this.loopId) this.disable();
+
+    const gw = typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    const me = gw.CWGPlayground?.me();
+
+    if (!me || !me.view || !me.view.root) {
+      return false;
+    }
+
+    const worldContainer = me.view.root.parent;
+    const viewport = worldContainer ? worldContainer.parent : null;
+
+    if (!viewport || !viewport.children) {
+      return false;
+    }
+
+    let nativeFilterInstance = null;
+    for (const child of viewport.children) {
+      const filters = child.filters ? Array.from(child.filters) : [];
+      nativeFilterInstance = filters.find(
+        (filter) =>
+          filter?.glProgram?.constructor &&
+          filter?.resources?.colorMatrixUniforms?.constructor,
+      );
+      if (nativeFilterInstance) break;
+    }
+
+    if (!nativeFilterInstance) {
+      return false;
+    }
+
+    const FilterClass = Object.getPrototypeOf(nativeFilterInstance.constructor);
+    const GlProgramClass = nativeFilterInstance.glProgram.constructor;
+    const UniformGroupClass =
+      nativeFilterInstance.resources.colorMatrixUniforms.constructor;
+
+    this.uniforms = new UniformGroupClass({
+      uTime: { value: 0, type: "f32" },
+      uWorldTransform: { value: [0, 0, 1, 1], type: "vec4<f32>" },
+      uScreenCenter: { value: [0, 0], type: "vec2<f32>" },
+      uCloudColorR: { value: 1.0, type: "f32" },
+      uCloudColorG: { value: 1.0, type: "f32" },
+      uCloudColorB: { value: 1.0, type: "f32" },
+      uShadowOpacity: { value: 0.35, type: "f32" },
+      uCloudOpacity: { value: 0.85, type: "f32" },
+    });
+
+    const shadowProgram = new GlProgramClass({
+      vertex: this.vertexSrc,
+      fragment: this.shadowFragmentSrc,
+    });
+    const skyProgram = new GlProgramClass({
+      vertex: this.vertexSrc,
+      fragment: this.skyFragmentSrc,
+    });
+
+    this.shadowFilter = new FilterClass({
+      glProgram: shadowProgram,
+      resources: { cloudUniforms: this.uniforms },
+    });
+    this.skyFilter = new FilterClass({
+      glProgram: skyProgram,
+      resources: { cloudUniforms: this.uniforms },
+    });
+
+    this.groundContainers = [
+      viewport.children[2],
+      viewport.children[3],
+      viewport.children[4],
+    ].filter(Boolean);
+    this.skyContainers = [viewport.children[0], viewport.children[1]].filter(
+      Boolean,
+    );
+
+    this.groundContainers.forEach((container) => {
+      const existing = container.filters ? Array.from(container.filters) : [];
+      if (!existing.includes(this.shadowFilter))
+        existing.push(this.shadowFilter);
+      container.filters = existing;
+    });
+
+    this.skyContainers.forEach((container) => {
+      const existing = container.filters ? Array.from(container.filters) : [];
+      if (!existing.includes(this.skyFilter)) existing.push(this.skyFilter);
+      container.filters = existing;
+    });
+
+    this.startTime = Date.now();
+    this.tickCounter = 0;
+
+    const updateLoop = () => {
+      if (this.shadowFilter || this.skyFilter) {
+        const elapsedSeconds = (Date.now() - this.startTime) / 1000.0;
+        this.setUniform("uTime", elapsedSeconds);
+
+        const sw = gw.innerWidth || 1920;
+        const sh = gw.innerHeight || 1080;
+        this.setUniform("uScreenCenter", [sw / 2.0, sh / 2.0]);
+
+        const wt = worldContainer.worldTransform;
+        if (wt) {
+          this.setUniform("uWorldTransform", [wt.tx, wt.ty, wt.a, wt.d]);
+        }
+
+        if (this.tickCounter % 30 === 0) {
+          const gameTime = this.getGameTimeObj();
+          if (gameTime) {
+            const weather = this.calculateWeatherColors(
+              gameTime.hour,
+              gameTime.minute,
+              gameTime.moon,
+            );
+
+            this.setUniform("uCloudColorR", weather.color[0]);
+            this.setUniform("uCloudColorG", weather.color[1]);
+            this.setUniform("uCloudColorB", weather.color[2]);
+            this.setUniform("uShadowOpacity", weather.shadowOp);
+            this.setUniform("uCloudOpacity", weather.cloudOp);
+          }
+        }
+        this.tickCounter++;
+
+        this.loopId = requestAnimationFrame(updateLoop);
+      }
+    };
+    updateLoop();
+
+    logger.log(
+      "[CWG-Bamboo Weather] World-Space shader system compiled & buffer synced.",
+    );
+    return true;
+  },
+
+  disable: function () {
+    this.groundContainers.forEach((c) => {
+      if (c?.filters)
+        c.filters = c.filters.filter((f) => f !== this.shadowFilter);
+    });
+    this.skyContainers.forEach((c) => {
+      if (c?.filters) c.filters = c.filters.filter((f) => f !== this.skyFilter);
+    });
+
+    this.groundContainers = [];
+    this.skyContainers = [];
+
+    if (this.loopId) {
+      cancelAnimationFrame(this.loopId);
+      this.loopId = null;
+    }
+    this.shadowFilter = null;
+    this.skyFilter = null;
+    logger.log("[CWG-Bamboo Weather] Shader system disabled.");
+  },
+};
+
 // ====================================================================================================================
 //   . . . PAGE ROUTERS (TABLE OF CONTENTS) . . .
 // ====================================================================================================================
@@ -2817,14 +4202,26 @@ function initPlayPage() {
     initLocationHUD();
   }
 
+  if (bambooSettings.showActionHotbar) {
+    document.body.classList.add("bamboo-hotbar-active");
+    initHotbarHUD();
+  }
+
   if (bambooSettings.enableBambooChat) {
     document.body.classList.add("bamboo-hide-native-bubbles");
     initBambooChat();
-    hookChatEngine();
+  }
+
+  if (bambooSettings.enableWeatherShader) {
+    const initWeatherLoop = () => {
+      if (!weatherManager.init()) {
+        setTimeout(initWeatherLoop, 300);
+      }
+    };
+    initWeatherLoop();
   }
 
   initSettingsButton();
-
   initEventNotificationObserver();
 }
 
