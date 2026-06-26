@@ -11,7 +11,7 @@
 // @updateURL    https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @downloadURL  https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @license      Apache-2.0
-// @iconURL
+// @iconURL      https://raw.githubusercontent.com/Ibirtem/CatWarGame-Bamboo/main/images/icons/bamboo.png
 // @run-at       document-start
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -844,7 +844,7 @@ function injectCustomStyles() {
           gap: 6px;
           margin-top: 10px;
           text-align: left;
-          max-height: 220px;
+          max-height: 300px;
           overflow-y: auto;
           padding-right: 4px;
         }
@@ -1019,6 +1019,31 @@ function injectCustomStyles() {
           margin: 4px 6px;
           opacity: 0.6;
         }
+
+        body.bamboo-hotbar-active div[class*="MuiBox-root"]:has(> div[style*="transition: opacity 800ms"]) {
+          bottom: 90px !important;
+        }
+
+        /* --- CHAT HISTORY DIVIDER --- */
+        .bamboo-chat-divider {
+          text-align: center;
+          font-size: 11px;
+          color: var(--bamboo-text-secondary);
+          margin: 8px 0;
+          position: relative;
+        }
+
+        .bamboo-chat-divider::before, .bamboo-chat-divider::after {
+          content: "";
+          position: absolute;
+          top: 50%;
+          width: 30%;
+          height: 1px;
+          background: var(--bamboo-msg-border);
+        }
+
+        .bamboo-chat-divider::before { left: 5%; }
+        .bamboo-chat-divider::after { right: 5%; }
 
         #cwg-tc-panel {
           position: fixed;
@@ -1842,6 +1867,14 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
             data-setting="enableBambooChat"
           />
         </div>
+        <div class="bamboo-setting-row">
+          <span>История сообщений чата</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="saveChatHistory"
+          />
+        </div>
       </div>
 
       <!-- Sounds & Notifications -->
@@ -1924,7 +1957,7 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
       <div class="bamboo-settings-category">
         <div class="bamboo-settings-category-title">Шейдеры</div>
         <div class="bamboo-setting-row">
-          <span>Динамические облака и тени</span>
+          <span>Динамические облака и тени от них, звёзды.</span>
           <input
             type="checkbox"
             class="bamboo-checkbox"
@@ -2034,9 +2067,11 @@ function bindSettingsListeners() {
       if (setting === "showActionHotbar") {
         const hotbar = document.getElementById("cwg-bamboo-hotbar");
         if (element.checked) {
+          document.body.classList.add("bamboo-hotbar-active");
           if (hotbar) hotbar.style.display = "flex";
           else initHotbarHUD();
         } else {
+          document.body.classList.remove("bamboo-hotbar-active");
           if (hotbar) hotbar.style.display = "none";
         }
       }
@@ -2848,6 +2883,28 @@ function initBambooChat() {
   document.body.appendChild(chatPanel);
   logger.log("[CWG-Bamboo] Custom Improved Chat successfully injected.");
 
+  if (bambooSettings.saveChatHistory) {
+    const history = getChatHistory();
+    if (history.length > 0) {
+      history.forEach((msg) => {
+        addMessageToBambooChat(
+          msg.author,
+          msg.text,
+          msg.isSystem,
+          msg.isMe,
+          msg.timeStr,
+        );
+      });
+
+      const msgContainer = document.getElementById("cwg-bamboo-chat-messages");
+      msgContainer.insertAdjacentHTML(
+        "beforeend",
+        `<div class="bamboo-chat-divider">Сохранённые</div>`,
+      );
+      msgContainer.scrollTop = msgContainer.scrollHeight;
+    }
+  }
+
   const handle = chatPanel.querySelector(".bamboo-resize-handle");
   makeChatResizable(chatPanel, handle);
 
@@ -2934,6 +2991,23 @@ async function hookChatEngine() {
 }
 
 /**
+ * Escapes HTML special characters to protect against XSS. Why not?
+ */
+function escapeBambooChatHTML(value) {
+  return String(value ?? "").replace(
+    /[&<>"']/g,
+    (char) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[char],
+  );
+}
+
+/**
  * Appends a formatted message bubble to the custom Bamboo Chat.
  * Handles styling separation for system notices, self-sent, and peer messages.
  *
@@ -2942,29 +3016,45 @@ async function hookChatEngine() {
  * @param {boolean} [isSystem=false] - Whether this is an in-game system notification.
  * @param {boolean} [isMe=false] - Whether the message originates from the local player.
  */
-function addMessageToBambooChat(author, text, isSystem = false, isMe = false) {
+function addMessageToBambooChat(
+  author,
+  text,
+  isSystem = false,
+  isMe = false,
+  timeOverride = null,
+) {
   const msgContainer = document.getElementById("cwg-bamboo-chat-messages");
   if (!msgContainer) return;
 
   const now = new Date();
-  const timeStr = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+  const timeStr =
+    timeOverride ||
+    `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+
+  if (!timeOverride && bambooSettings.saveChatHistory) {
+    pushToChatHistory({ author, text, isSystem, isMe, timeStr });
+  }
+
+  const safeTimeStr = escapeBambooChatHTML(timeStr);
+  const safeAuthor = escapeBambooChatHTML(author);
+  const safeText = escapeBambooChatHTML(text);
 
   let messageHTML = "";
 
   if (isSystem) {
     messageHTML = `
       <div class="bamboo-chat-msg system">
-        <span class="time">[${timeStr}]</span>
-        <span class="text">${text}</span>
+        <span class="time">[${safeTimeStr}]</span>
+        <span class="text">${safeText}</span>
       </div>
     `;
   } else {
     const selfClass = isMe ? " self" : "";
     messageHTML = `
       <div class="bamboo-chat-msg${selfClass}">
-        <span class="time">[${timeStr}]</span>
-        <span class="author">${author}</span>: 
-        <span class="text">${text}</span>
+        <span class="time">[${safeTimeStr}]</span>
+        <span class="author">${safeAuthor}</span>: 
+        <span class="text">${safeText}</span>
       </div>
     `;
   }
@@ -3087,6 +3177,52 @@ function makeChatResizable(chatPanel, handle) {
   }
 
   handle.addEventListener("mousedown", onMouseDown);
+}
+
+/**
+ * Gets chat history from a separate storage slot
+ */
+function getChatHistory() {
+  try {
+    let stored = null;
+    if (typeof GM_getValue !== "undefined") {
+      stored = GM_getValue("bamboo_chatHistory", null);
+    } else {
+      const localStored = localStorage.getItem("bamboo_chatHistory");
+      if (localStored) stored = JSON.parse(localStored);
+    }
+    return Array.isArray(stored) ? stored : [];
+  } catch (err) {
+    return [];
+  }
+}
+
+/**
+ * Saves history (max 50 messages)
+ */
+function saveChatHistoryToDB(historyArray) {
+  try {
+    if (historyArray.length > 50) {
+      historyArray = historyArray.slice(-50);
+    }
+    if (typeof GM_setValue !== "undefined") {
+      GM_setValue("bamboo_chatHistory", historyArray);
+    } else {
+      localStorage.setItem("bamboo_chatHistory", JSON.stringify(historyArray));
+    }
+  } catch (err) {
+    logger.error("[CWG-Bamboo] Failed to save chat history:", err);
+  }
+}
+
+/**
+ * Pushes a new message to the repository if the setting is enabled
+ */
+function pushToChatHistory(msgData) {
+  if (!bambooSettings.saveChatHistory) return;
+  const history = getChatHistory();
+  history.push(msgData);
+  saveChatHistoryToDB(history);
 }
 
 // ====================================================================================================================
@@ -3778,7 +3914,7 @@ const weatherManager = {
           float d = length(f - offset);
           
           float size = 0.13 + 0.14 * fract(r * 1000.0);
-          float star = smoothstep(size, size * 0.1, d) * threshold;
+          float star = (1.0 - smoothstep(size * 0.1, size, d)) * threshold;
           
           float speed = 0.2 + fract(r * 789.12) * 0.5;
           float phase = fract(r * 1234.56) * 6.28;
@@ -3926,7 +4062,7 @@ const weatherManager = {
     } else if (sunPosition >= 20 && sunPosition < 160) {
       // Full Day
       color = DAY_COLOR;
-      shadowOp = 0.4;
+      shadowOp = 0.6;
       cloudOp = 0.85;
     } else if (sunPosition >= 160 && sunPosition < 180) {
       // Day -> Sunset
@@ -4127,6 +4263,7 @@ function initPlayPage() {
   }
 
   if (bambooSettings.showActionHotbar) {
+    document.body.classList.add("bamboo-hotbar-active");
     initHotbarHUD();
   }
 
