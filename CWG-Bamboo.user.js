@@ -217,6 +217,8 @@ const packetHandlers = {
 
   /** Main distributor */
   process(packet) {
+    if (!packet || typeof packet !== "object" || !packet.code) return;
+
     switch (packet.code) {
       case 1001:
         this.handleSystemMessage(packet);
@@ -3636,17 +3638,16 @@ const timeCalculator = {
       pos2 = 0,
       pos3 = 0,
       pos4 = 0;
-    handle.onmousedown = (e) => {
-      e = e || window.event;
+
+    const onMouseDown = (e) => {
       if (e.target.id === "tc-close-btn") return;
       pos3 = e.clientX;
       pos4 = e.clientY;
-      document.onmouseup = closeDragElement;
-      document.onmousemove = elementDrag;
+      document.addEventListener("mouseup", closeDragElement);
+      document.addEventListener("mousemove", elementDrag);
     };
 
-    function elementDrag(e) {
-      e = e || window.event;
+    const elementDrag = (e) => {
       pos1 = pos3 - e.clientX;
       pos2 = pos4 - e.clientY;
       pos3 = e.clientX;
@@ -3666,12 +3667,14 @@ const timeCalculator = {
       panel.style.top = newTop + "px";
       panel.style.left = newLeft + "px";
       panel.style.right = "auto";
-    }
+    };
 
     function closeDragElement() {
-      document.onmouseup = null;
-      document.onmousemove = null;
+      document.removeEventListener("mouseup", closeDragElement);
+      document.removeEventListener("mousemove", elementDrag);
     }
+
+    handle.addEventListener("mousedown", onMouseDown);
   },
 
   togglePanel: function () {
@@ -4025,14 +4028,15 @@ const weatherManager = {
     const me = gw.CWGPlayground?.me();
 
     if (!me || !me.view || !me.view.root) {
-      logger.warn("[CWG-Bamboo Weather] Play entity not found.");
-      return;
+      return false;
     }
 
     const worldContainer = me.view.root.parent;
-    const viewport = worldContainer.parent;
+    const viewport = worldContainer ? worldContainer.parent : null;
 
-    if (!viewport || !viewport.children) return;
+    if (!viewport || !viewport.children) {
+      return false;
+    }
 
     let nativeFilterInstance = null;
     for (const child of viewport.children) {
@@ -4044,7 +4048,10 @@ const weatherManager = {
       );
       if (nativeFilterInstance) break;
     }
-    if (!nativeFilterInstance) return;
+
+    if (!nativeFilterInstance) {
+      return false;
+    }
 
     const FilterClass = Object.getPrototypeOf(nativeFilterInstance.constructor);
     const GlProgramClass = nativeFilterInstance.glProgram.constructor;
@@ -4145,6 +4152,7 @@ const weatherManager = {
     logger.log(
       "[CWG-Bamboo Weather] World-Space shader system compiled & buffer synced.",
     );
+    return true;
   },
 
   disable: function () {
@@ -4205,9 +4213,12 @@ function initPlayPage() {
   }
 
   if (bambooSettings.enableWeatherShader) {
-    setTimeout(() => {
-      weatherManager.init();
-    }, 2000);
+    const initWeatherLoop = () => {
+      if (!weatherManager.init()) {
+        setTimeout(initWeatherLoop, 300);
+      }
+    };
+    initWeatherLoop();
   }
 
   initSettingsButton();
