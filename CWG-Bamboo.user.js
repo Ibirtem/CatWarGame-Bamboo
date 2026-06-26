@@ -158,6 +158,76 @@ const networkManager = {
   },
 };
 
+/**
+ * Handler for incoming packets from the server.
+ */
+const packetHandlers = {
+  /**
+   * Helper function for converting a player's ID to their name.
+   */
+  _resolvePlayerName(senderId) {
+    const gameWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    let authorName = "Неизвестный";
+    let isMe = false;
+
+    if (gameWindow.CWGPlayground) {
+      const me = gameWindow.CWGPlayground.me();
+      isMe = !!(me && me.id === senderId);
+
+      const cats = gameWindow.CWGPlayground.getCats() || [];
+      const senderCat =
+        cats.find((c) => c.id === senderId) || (isMe ? me : null);
+
+      if (senderCat && senderCat.name) {
+        authorName = senderCat.name;
+      }
+    }
+
+    return { authorName, isMe };
+  },
+
+  /** MsgCode: 1001 (SimpleMessage) */
+  handleSystemMessage(packet) {
+    if (packet.payload && typeof packet.payload.message === "string") {
+      const sysMessage = packet.payload.message;
+      dispatchSystemNotification(sysMessage);
+
+      if (bambooSettings.enableNetworkLogging) {
+        console.log(`[CWG-Bamboo WS] System alert processed: "${sysMessage}"`);
+      }
+    }
+  },
+
+  /** MsgCode: 2003 (Say) */
+  handleChatMessage(packet) {
+    if (packet.payload && packet.payload.sender && packet.payload.text) {
+      const { sender, text } = packet.payload;
+      const { authorName, isMe } = this._resolvePlayerName(sender);
+
+      if (bambooSettings.enableBambooChat) {
+        addMessageToBambooChat(authorName, text, false, isMe);
+      }
+
+      if (bambooSettings.enableNetworkLogging) {
+        console.log(`[CWG-Bamboo WS] Chat from ${authorName}: "${text}"`);
+      }
+    }
+  },
+
+  /** Main distributor */
+  process(packet) {
+    switch (packet.code) {
+      case 1001:
+        this.handleSystemMessage(packet);
+        break;
+      case 2003:
+        this.handleChatMessage(packet);
+        break;
+    }
+  },
+};
+
 // ====================================================================================================================
 //   . . . NETWORK & CANVAS INTERCEPTORS . . .
 // ====================================================================================================================
@@ -199,21 +269,7 @@ const networkManager = {
           if (typeof event.data === "string") {
             const packet = JSON.parse(event.data);
 
-            if (
-              packet &&
-              packet.code === 1001 &&
-              packet.payload &&
-              typeof packet.payload.message === "string"
-            ) {
-              const sysMessage = packet.payload.message;
-              dispatchSystemNotification(sysMessage);
-
-              if (bambooSettings.enableNetworkLogging) {
-                console.log(
-                  `[CWG-Bamboo WS] Decoded and dispatched system alert: "${sysMessage}"`,
-                );
-              }
-            }
+            packetHandlers.process(packet);
 
             if (bambooSettings.enableNetworkLogging) {
               console.log("[CWG-Bamboo WS Packet IN]", packet);
@@ -2849,8 +2905,13 @@ function bindChatTabs(chatPanel) {
 function toggleBambooChat() {
   const chatPanel = document.getElementById("cwg-bamboo-chat");
   if (!chatPanel) return;
-  chatPanel.style.display =
-    chatPanel.style.display === "none" ? "flex" : "none";
+  const isHidden = chatPanel.style.display === "none";
+  chatPanel.style.display = isHidden ? "flex" : "none";
+
+  if (isHidden) {
+    const msgContainer = document.getElementById("cwg-bamboo-chat-messages");
+    if (msgContainer) msgContainer.scrollTop = msgContainer.scrollHeight;
+  }
 }
 
 /**
@@ -2910,8 +2971,6 @@ function initBambooChat() {
 
   bindChatTabs(chatPanel);
 
-  observeNativeChat();
-
   document.addEventListener(
     "click",
     (e) => {
@@ -2928,66 +2987,6 @@ function initBambooChat() {
     },
     true,
   );
-}
-
-/**
- * Hooks into the prototype of the game's Cat entity to intercept peer chat events.
- * Correctly maps parameters to resolve the issue where IDs were displayed as messages.
- */
-async function hookChatEngine() {
-  const gameWindow =
-    typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-  let me = null;
-
-  logger.log(
-    "[CWG-Bamboo] Waiting for controllable entity to spawn before hooking speech...",
-  );
-
-  while (!me) {
-    if (
-      gameWindow.CWGPlayground &&
-      typeof gameWindow.CWGPlayground.me === "function"
-    ) {
-      me = gameWindow.CWGPlayground.me();
-    }
-    if (!me) {
-      await new Promise((resolve) => setTimeout(resolve, 1000));
-    }
-  }
-
-  const CatProto = Object.getPrototypeOf(me);
-
-  if (
-    CatProto &&
-    typeof CatProto.say === "function" &&
-    !CatProto.say.__bambooHooked
-  ) {
-    const originalSay = CatProto.say;
-
-    CatProto.say = function (message) {
-      try {
-        if (bambooSettings.enableBambooChat) {
-          const myId = gameWindow.CWGPlayground?.me()?.id;
-          const isMe = this.id === myId;
-
-          addMessageToBambooChat(
-            this.name || "Неизвестный",
-            message,
-            false,
-            isMe,
-          );
-        }
-      } catch (err) {
-        logger.error("[CWG-Bamboo] Error in hooked say():", err);
-      }
-      return originalSay.apply(this, arguments);
-    };
-
-    CatProto.say.__bambooHooked = true;
-    logger.log(
-      "[CWG-Bamboo] Native Cat.say() successfully patched! Backup speech interceptor is live.",
-    );
-  }
 }
 
 /**
@@ -3061,73 +3060,6 @@ function addMessageToBambooChat(
 
   msgContainer.insertAdjacentHTML("beforeend", messageHTML);
   msgContainer.scrollTop = msgContainer.scrollHeight;
-}
-
-/**
- * Monitors the native (hidden) chat UI for changes.
- * Integrates intercepted messages into the custom chat while maintaining visual alignment.
- */
-function observeNativeChat() {
-  const nativeDrawerSelector = ".MuiDrawer-root";
-  logger.log(
-    `[CWG-Bamboo] Setting up native chat observer on: "${nativeDrawerSelector}"`,
-  );
-
-  setupSingleCallback(nativeDrawerSelector, (drawer) => {
-    logger.log(
-      "[CWG-Bamboo] Target MuiDrawer-root found! Hiding and hooking MutationObserver...",
-    );
-
-    document.body.classList.add("bamboo-hide-native-chat");
-
-    const observer = new MutationObserver((mutations) => {
-      mutations.forEach((mutation) => {
-        if (mutation.type === "childList" && mutation.addedNodes.length > 0) {
-          mutation.addedNodes.forEach((node) => {
-            if (node.nodeType !== 1) return;
-
-            const authorSpan = node.querySelector("span");
-            const textParagraph = node.querySelector("p");
-
-            if (authorSpan && textParagraph) {
-              const author = authorSpan.textContent.trim();
-              const text = textParagraph.textContent.trim();
-
-              const gameWindow =
-                typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-              const myName = gameWindow.CWGPlayground?.me()?.name;
-              const isMe = author === myName;
-
-              addMessageToBambooChat(author, text, false, isMe);
-            } else {
-              const systemSpan = node.querySelector("span");
-              if (systemSpan) {
-                const text = systemSpan.textContent.trim();
-
-                if (
-                  text !== "События" &&
-                  text !== "Локальный чат" &&
-                  text !== "Чат" &&
-                  text !== "Мяукни что-нибудь"
-                ) {
-                  addMessageToBambooChat(null, text, true);
-                }
-              }
-            }
-          });
-        }
-      });
-    });
-
-    observer.observe(drawer, {
-      childList: true,
-      subtree: true,
-    });
-
-    logger.log(
-      "[CWG-Bamboo] MutationObserver successfully hooked to native hidden chat.",
-    );
-  });
 }
 
 /**
@@ -4270,7 +4202,6 @@ function initPlayPage() {
   if (bambooSettings.enableBambooChat) {
     document.body.classList.add("bamboo-hide-native-bubbles");
     initBambooChat();
-    hookChatEngine();
   }
 
   if (bambooSettings.enableWeatherShader) {
