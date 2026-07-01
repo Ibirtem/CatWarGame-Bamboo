@@ -35,9 +35,15 @@ const bambooDefaultSettings = {
   showSkillsHUD: false,
 
   enableBambooChat: false,
+  saveChatHistory: false,
+  chatClickToMention: false,
+  chatHighlightMentions: false,
+  chatMentionSound: "notificationSound2",
+  chatMentionVolume: 5,
+  bambooChatHeight: 450,
+
   enableLogging: false,
   enableNetworkLogging: false,
-  bambooChatHeight: 450,
 
   eventNotificationSound: "notificationSound1",
   eventNotificationVolume: 5,
@@ -379,9 +385,9 @@ const bambooDefaultThemes = {
     hudBlur: "4px",
     hudText: "#ffffff",
 
-    hudUpperBg: "rgba(15, 15, 15, 0.75)",
-    hudUpperBorder: "rgba(255, 255, 255, 0.08)",
-    hudUpperBlur: "4px",
+    hudUpperBg: "rgba(0, 0, 0, 0.6)",
+    hudUpperBorder: "rgba(0, 0, 0, 0)",
+    hudUpperBlur: "",
     hudUpperText: "#ffffff",
 
     msgBg: "rgba(255, 255, 255, 0.04)",
@@ -616,6 +622,16 @@ function injectCustomStyles() {
           color: var(--bamboo-accent);
         }
 
+        .bamboo-chat-msg .author.clickable {
+          cursor: pointer;
+          transition: opacity 0.2s, text-decoration 0.2s;
+        }
+
+        .bamboo-chat-msg .author.clickable:hover {
+          opacity: 0.8;
+          text-decoration: underline;
+        }
+
         .bamboo-chat-msg.system {
           color: var(--bamboo-warning);
           font-style: italic;
@@ -704,7 +720,8 @@ function injectCustomStyles() {
           flex-direction: column;
           gap: 12px;
           overflow-y: auto;
-          max-height: 50vh;
+          flex: 1 1 auto;
+          min-height: 0;
           padding-right: 4px;
         }
 
@@ -739,6 +756,7 @@ function injectCustomStyles() {
           display: flex;
           flex-direction: column;
           gap: 4px;
+          flex: 0 0 auto;
         }
 
         .custom-select {
@@ -904,8 +922,18 @@ function injectCustomStyles() {
           gap: 6px;
           margin-top: 10px;
           text-align: left;
-          max-height: 300px;
+          max-height: 250px;
           overflow-y: auto;
+          padding-right: 4px;
+        }
+
+        .bamboo-settings-content {
+          display: flex;
+          flex-direction: column;
+          gap: 12px;
+          overflow-y: auto;
+          flex: 1 1 auto;
+          min-height: 0;
           padding-right: 4px;
         }
 
@@ -914,6 +942,7 @@ function injectCustomStyles() {
           border: 1px solid rgba(255, 255, 255, 0.08);
           border-radius: 6px;
           overflow: hidden;
+          flex-shrink: 0;
         }
 
         .bamboo-news-header {
@@ -951,7 +980,7 @@ function injectCustomStyles() {
         }
 
         .bamboo-news-body.open {
-          max-height: 160px;
+          max-height: 200px;
           overflow-y: auto;
         }
 
@@ -1299,6 +1328,14 @@ function injectCustomStyles() {
           width: 100% !important;
           box-sizing: border-box !important;
         }
+
+        .bamboo-mention {
+          color: var(--bamboo-accent);
+          background: rgba(126, 184, 255, 0.2);
+          padding: 0 4px;
+          border-radius: 4px;
+          font-weight: bold;
+        }
     `;
   document.head.appendChild(style);
 }
@@ -1406,6 +1443,118 @@ async function waitForPlayground() {
   return gameWindow.CWGPlayground;
 }
 
+/**
+ * Sets the value in a React-controlled input/textarea
+ * and triggers an event to update the game's internal state.
+ */
+function setReactInputValue(element, value) {
+  const valueSetter = Object.getOwnPropertyDescriptor(element, "value")?.set;
+  const prototype = Object.getPrototypeOf(element);
+  const prototypeValueSetter = Object.getOwnPropertyDescriptor(
+    prototype,
+    "value",
+  )?.set;
+
+  if (prototypeValueSetter && valueSetter !== prototypeValueSetter) {
+    prototypeValueSetter.call(element, value);
+  } else if (valueSetter) {
+    valueSetter.call(element, value);
+  } else {
+    element.value = value;
+  }
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// ====================================================================================================================
+//   . . . PLAYER & GAME API MANAGER . . .
+// ====================================================================================================================
+
+/**
+ * Centralized manager for working with the game API (CWGPlayground).
+ * Prevents call spam, protects against errors early in the loading process
+ * and provides a subscription (observer) system for reactive state.
+ */
+const playerManager = {
+  _errorThrottler: 0,
+  _watchers: [],
+  _pollTimer: null,
+
+  /**
+   * Safely returns the current player object.
+   * @returns {Object|null} MobX player object or null.
+   */
+  get me() {
+    const gameWindow =
+      typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+    if (
+      !gameWindow.CWGPlayground ||
+      typeof gameWindow.CWGPlayground.me !== "function"
+    ) {
+      this._logError("API CWGPlayground еще не готово.");
+      return null;
+    }
+    try {
+      return gameWindow.CWGPlayground.me();
+    } catch (e) {
+      this._logError("Ошибка при вызове CWGPlayground.me()", e);
+      return null;
+    }
+  },
+
+  get name() {
+    return this.me?.name || null;
+  },
+
+  /**
+   * Subscribes to changes in a specific player value.
+   * @param {Function} getterFn - Data retrieval function, e.g. (me) => me.hp.value
+   * @param {Function} callback - Called when a change occurs: (newVal, oldVal) => void
+   * @returns {Function} Unsubscribe function
+   */
+  watch(getterFn, callback) {
+    const watcher = { getter: getterFn, callback, lastValue: undefined };
+    this._watchers.push(watcher);
+
+    if (!this._pollTimer) {
+      this._pollTimer = setInterval(() => this._tick(), 500);
+    }
+
+    return () => {
+      this._watchers = this._watchers.filter((w) => w !== watcher);
+      if (this._watchers.length === 0 && this._pollTimer) {
+        clearInterval(this._pollTimer);
+        this._pollTimer = null;
+      }
+    };
+  },
+
+  _tick() {
+    const me = this.me;
+    if (!me) return;
+    this._watchers.forEach((w) => {
+      try {
+        const val = w.getter(me);
+        if (val !== w.lastValue) {
+          if (w.lastValue !== undefined) w.callback(val, w.lastValue);
+          w.lastValue = val;
+        }
+      } catch (e) {
+        // Ignore temporary errors
+      }
+    });
+  },
+
+  /**
+   * Internal logger
+   */
+  _logError(msg, err = "") {
+    const now = Date.now();
+    if (now - this._errorThrottler > 10000) {
+      logger.warn(`[CWG-Bamboo PlayerManager] ${msg}`, err);
+      this._errorThrottler = now;
+    }
+  },
+};
 // ====================================================================================================================
 //   . . . UPDATE CHECKS . . .
 // ====================================================================================================================
@@ -2026,6 +2175,31 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
             data-setting="saveChatHistory"
           />
         </div>
+        <div class="bamboo-setting-row">
+          <span>Обращение по клику на ник</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="chatClickToMention"
+          />
+        </div>
+        <div class="bamboo-setting-row" style="flex-wrap: wrap;">
+          <div
+            style="display: flex; justify-content: space-between; width: 100%; align-items: center;"
+          >
+            <span>Подсветка и звук при упоминании меня</span>
+            <input
+              type="checkbox"
+              class="bamboo-checkbox"
+              data-setting="chatHighlightMentions"
+            />
+          </div>
+          <div
+            style="font-size: 10px; opacity: 0.6; width: 100%; margin-top: 4px;"
+          >
+            * Громкость и сам звук настраиваются в разделе «Звуки и Уведомления»
+          </div>
+        </div>
       </div>
 
       <!-- Sounds & Notifications -->
@@ -2068,6 +2242,36 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
               />
             </div>
             <div id="eventNotificationSoundContainer"></div>
+          </div>
+        </div>
+
+        <div
+          class="bamboo-setting-row"
+          style="flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 6px;"
+        >
+          <span>Уведомление упоминания в чате</span>
+          <div
+            style="display: flex; gap: 8px; width: 100%; align-items: center;"
+          >
+            <div class="custom-select" id="chatMentionSound" style="flex: 1;">
+              <div class="select-selected">Выберите звук</div>
+              <div class="select-items"></div>
+            </div>
+            <div
+              class="volume-control"
+              style="width: 110px; display: flex; align-items: center; gap: 6px;"
+            >
+              <span>🔊</span>
+              <input
+                type="range"
+                min="1"
+                max="10"
+                class="bamboo-range-slider"
+                id="chatMentionVolume"
+                data-setting="chatMentionVolume"
+              />
+            </div>
+            <div id="chatMentionSoundContainer"></div>
           </div>
         </div>
 
@@ -2596,7 +2800,7 @@ function initSettingsButton() {
 }
 
 /**
- * Safely formats the game date into a readable HH:MM format.
+ * Formats the game date into a readable HH:MM format.
  * Adapted to parse the specific object wrapper (e.g., { value: Array(5), hour, minute }) returned by the game's API.
  *
  * @param {any} rawDate - Raw game date object from getDate().
@@ -2644,7 +2848,7 @@ function formatGameTime(rawDate, vTime) {
 }
 
 /**
- * Safely formats the game date into a readable string (e.g., "01.08.3").
+ * Formats the game date into a readable string (e.g., "01.08.3").
  * Calculates the current season based on the in-game moon (month).
  *
  * @param {any} rawDate - Raw game date object from getDate().
@@ -2738,7 +2942,10 @@ function initTimeHUD() {
               ? gameWindow.CWGPlayground.getVirtualTime()
               : null;
 
-          timeElement.innerText = formatGameTime(rawDate, vTime);
+          const newTimeText = formatGameTime(rawDate, vTime);
+          if (timeElement.innerText !== newTimeText) {
+            timeElement.innerText = newTimeText;
+          }
         }
       } catch (err) {
         timeElement.innerText = "⚠️ Err";
@@ -2789,7 +2996,10 @@ function initDateHUD() {
               ? gameWindow.CWGPlayground.getVirtualTime()
               : null;
 
-          dateElement.innerText = formatGameDate(rawDate, vTime);
+          const newDateText = formatGameDate(rawDate, vTime);
+          if (dateElement.innerText !== newDateText) {
+            dateElement.innerText = newDateText;
+          }
         }
       } catch (err) {
         dateElement.innerText = "⚠️ Err";
@@ -2878,19 +3088,29 @@ function initLocationHUD() {
 
         if (data && data.text) {
           const emoji = getLocationEmoji(data.extraInfo);
-          locElement.innerText = `${emoji} ${data.text}`;
+          const newLocText = `${emoji} ${data.text}`;
+
+          if (locElement.innerText !== newLocText)
+            locElement.innerText = newLocText;
 
           if (data.extraInfo) {
-            locElement.title = data.extraInfo;
-            locElement.style.cursor = "help";
+            if (locElement.title !== data.extraInfo)
+              locElement.title = data.extraInfo;
+            if (locElement.style.cursor !== "help")
+              locElement.style.cursor = "help";
           } else {
-            locElement.removeAttribute("title");
-            locElement.style.cursor = "default";
+            if (locElement.hasAttribute("title"))
+              locElement.removeAttribute("title");
+            if (locElement.style.cursor !== "default")
+              locElement.style.cursor = "default";
           }
         } else {
-          locElement.innerText = "📍 Sync...";
-          locElement.removeAttribute("title");
-          locElement.style.cursor = "default";
+          if (locElement.innerText !== "📍 Sync...")
+            locElement.innerText = "📍 Sync...";
+          if (locElement.hasAttribute("title"))
+            locElement.removeAttribute("title");
+          if (locElement.style.cursor !== "default")
+            locElement.style.cursor = "default";
         }
       } catch (err) {
         locElement.innerText = "⚠️ Err";
@@ -2974,12 +3194,12 @@ let hpBarInterval = null;
  */
 function initHPBar() {
   if (!bambooSettings.enableHPBar) return;
-
   document.body.classList.add("bamboo-hp-active");
+
   updateHPBar();
 
   if (!hpBarInterval) {
-    hpBarInterval = setInterval(updateHPBar, 300);
+    hpBarInterval = setInterval(updateHPBar, 400);
   }
 }
 
@@ -3027,19 +3247,21 @@ function updateHPBar() {
     innerBox.appendChild(customContainer);
   }
 
-  const gameWindow =
-    typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-  const me = gameWindow.CWGPlayground?.me();
-  if (me && me.hp) {
+  const me = playerManager.me;
+  if (me?.hp) {
     const val = typeof me.hp.value === "number" ? me.hp.value : 0;
     const max = typeof me.hp.max === "number" ? me.hp.max : 100;
-    const pct = max > 0 ? (val / max) * 100 : 0;
+    const pct = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
 
     const fillEl = customContainer.querySelector(".bamboo-progress-fill");
     const textEl = customContainer.querySelector(".bamboo-progress-text");
 
-    if (fillEl) fillEl.style.width = `${pct}%`;
-    if (textEl) textEl.textContent = `${val}/${max}`;
+    const newWidth = `${pct}%`;
+    const newText = `${val}/${max}`;
+
+    if (fillEl && fillEl.style.width !== newWidth)
+      fillEl.style.width = newWidth;
+    if (textEl && textEl.textContent !== newText) textEl.textContent = newText;
   }
 }
 
@@ -3086,17 +3308,17 @@ function calculateLevelProgress(totalExp, thresholds) {
   };
 }
 
-let skillsHUDInterval = null;
+let skillsWatcherUnsubscribe = null;
 
 /**
  * Initializes mounts the skill bar inside #root.
  */
 function initSkillsHUD() {
   if (!bambooSettings.showSkillsHUD) return;
-
   const targetSelector = ".MuiStack-root.css-1byqyzy";
 
   setupSingleCallback(targetSelector, () => {
+    if (!bambooSettings.showSkillsHUD) return;
     if (document.getElementById("cwg-bamboo-skills")) return;
 
     const panel = document.createElement("div");
@@ -3106,22 +3328,31 @@ function initSkillsHUD() {
       "position: fixed; top: 10px; left: 10px; display: flex; flex-direction: column; gap: 10px; padding: 12px; z-index: 997; min-width: 220px; box-sizing: border-box;";
 
     document.body.appendChild(panel);
-    logger.log(
-      "[CWG-Bamboo] Skills Panel safely attached to body after HUD mount.",
-    );
+    logger.log("[CWG-Bamboo] Skills Panel attached to body after HUD mount.");
 
     updateSkillsHUD();
 
-    if (!skillsHUDInterval) {
-      skillsHUDInterval = setInterval(updateSkillsHUD, 400);
+    if (!skillsWatcherUnsubscribe) {
+      skillsWatcherUnsubscribe = playerManager.watch(
+        (me) => {
+          return Object.values(bambooSkillsConfig)
+            .map((config) =>
+              typeof config.getExp === "function" ? config.getExp(me) : 0,
+            )
+            .join("_");
+        },
+        (newVal, oldVal) => {
+          updateSkillsHUD();
+        },
+      );
     }
   });
 }
 
 function removeSkillsHUD() {
-  if (skillsHUDInterval) {
-    clearInterval(skillsHUDInterval);
-    skillsHUDInterval = null;
+  if (skillsWatcherUnsubscribe) {
+    skillsWatcherUnsubscribe();
+    skillsWatcherUnsubscribe = null;
   }
   const panel = document.getElementById("cwg-bamboo-skills");
   if (panel) panel.remove();
@@ -3136,25 +3367,14 @@ function updateSkillsHUD() {
   const panel = document.getElementById("cwg-bamboo-skills");
   if (!panel) return;
 
-  const gameWindow =
-    typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
-  let me = null;
-
-  try {
-    me = gameWindow.CWGPlayground?.me();
-  } catch (e) {
-    logger.error("[CWG-Bamboo] Failed to fetch character data:", e);
-  }
+  const me = playerManager.me;
 
   if (!me) {
-    const existingPanel = document.getElementById("cwg-bamboo-skills");
-    if (existingPanel) existingPanel.style.display = "none";
+    if (panel.style.display !== "none") panel.style.display = "none";
     return;
   }
 
-  let html = `
-  `;
-
+  let html = ``;
   let visibleSkillsCount = 0;
 
   for (const [key, config] of Object.entries(bambooSkillsConfig)) {
@@ -3185,10 +3405,13 @@ function updateSkillsHUD() {
   }
 
   if (visibleSkillsCount === 0) {
-    panel.style.display = "none";
+    if (panel.style.display !== "none") panel.style.display = "none";
   } else {
-    panel.style.display = "flex";
-    panel.innerHTML = html;
+    if (panel.style.display !== "flex") panel.style.display = "flex";
+
+    if (panel.innerHTML !== html) {
+      panel.innerHTML = html;
+    }
   }
 }
 
@@ -3307,6 +3530,29 @@ function initBambooChat() {
 
   bindChatTabs(chatPanel);
 
+  const msgContainerWrapper = document.getElementById(
+    "cwg-bamboo-chat-messages",
+  );
+  if (msgContainerWrapper) {
+    msgContainerWrapper.addEventListener("click", (e) => {
+      if (!bambooSettings.chatClickToMention) return;
+
+      const authorEl = e.target.closest(".author");
+      if (authorEl) {
+        e.preventDefault();
+        const textarea = document.querySelector('textarea[name="msg"]');
+        if (textarea) {
+          const authorName = authorEl.textContent.trim();
+          const currentVal = textarea.value;
+          const prefix = currentVal && !currentVal.endsWith(" ") ? " " : "";
+
+          setReactInputValue(textarea, currentVal + prefix + authorName + ", ");
+          textarea.focus();
+        }
+      }
+    });
+  }
+
   document.addEventListener(
     "click",
     (e) => {
@@ -3341,15 +3587,109 @@ function escapeBambooChatHTML(value) {
       })[char],
   );
 }
+const DEBUG_SELF_MENTION = false;
 
 /**
- * Appends a formatted message bubble to the custom Bamboo Chat.
- * Handles styling separation for system notices, self-sent, and peer messages.
+ * Formats the message time for display in chat.
  *
- * @param {string|null} author - The sender's nickname. Set to null for system messages.
- * @param {string} text - The raw message payload.
- * @param {boolean} [isSystem=false] - Whether this is an in-game system notification.
- * @param {boolean} [isMe=false] - Whether the message originates from the local player.
+ * @param {string|null} timeOverride - A time string from the saved local history.
+ * @returns {string} A time string ready for injection.
+ */
+function formatBambooChatTime(timeOverride) {
+  if (timeOverride) return timeOverride;
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+/**
+ * Escapes special characters for safe use within the RegExp constructor.
+ *
+ * @param {string} value - Source string
+ * @returns {string} Regular expression-safe string
+ */
+function escapeBambooChatRegExp(value) {
+  return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Parses the message text for the current player's name.
+ *
+ * @param {string} safeText - The pre-escaped HTML text of the message.
+ * @returns {{isMentioned: boolean, processedText: string}} The parsed result and the modified text.
+ */
+function processBambooChatMentions(safeText) {
+  const myName = playerManager.name;
+  let isMentioned = false;
+  let processedText = safeText;
+
+  if (myName && bambooSettings.chatHighlightMentions) {
+    const safeMyName = escapeBambooChatHTML(myName);
+    const safeMyNamePattern = escapeBambooChatRegExp(safeMyName);
+
+    const regex = new RegExp(
+      `(^|\\s|[.,!?])(${safeMyNamePattern})(?=$|\\s|[.,!?])`,
+      "gi",
+    );
+
+    if (regex.test(processedText)) {
+      isMentioned = true;
+      processedText = processedText.replace(regex, (match, p1, p2) => {
+        return `${p1}<span class="bamboo-mention">${p2}</span>`;
+      });
+    }
+  }
+  return { isMentioned, processedText };
+}
+
+/**
+ * Assembles the final HTML markup of the message for insertion into the DOM.
+ *
+ * @param {string} safeAuthor - The escaped sender name.
+ * @param {string} safeText - The processed message text (with mentions highlighted).
+ * @param {boolean} isSystem - The system message flag.
+ * @param {boolean} isMe - The custom message flag (applies alternative color/alignment).
+ * @param {string} safeTimeStr - The escaped time string.
+ * @returns {string} The finished HTML message block.
+ */
+function buildBambooChatMessageHTML(
+  safeAuthor,
+  safeText,
+  isSystem,
+  isMe,
+  safeTimeStr,
+) {
+  if (isSystem) {
+    return `
+      <div class="bamboo-chat-msg system">
+        <span class="time">[${safeTimeStr}]</span>
+        <span class="text">${safeText}</span>
+      </div>
+    `;
+  }
+
+  const selfClass = isMe ? " self" : "";
+  const clickableClass = bambooSettings.chatClickToMention ? " clickable" : "";
+  const authorTitle = bambooSettings.chatClickToMention
+    ? ' title="Ответить"'
+    : "";
+
+  return `
+    <div class="bamboo-chat-msg${selfClass}">
+      <span class="time">[${safeTimeStr}]</span>
+      <span class="author${clickableClass}"${authorTitle}>${safeAuthor}</span>: 
+      <span class="text">${safeText}</span>
+    </div>
+  `;
+}
+
+/**
+ * The main message rendering orchestrator in Bamboo Chat.
+ *
+ * @param {string|null} author - Sender's nickname (null for system messages).
+ * @param {string} text - Raw message text (before processing).
+ * @param {boolean} [isSystem=false] - Whether this is a system alert.
+ * @param {boolean} [isMe=false] - Whether the message was sent by a local client.
+ * @param {string|null} [timeOverride=null] - This flag indicates that the message is being rendered from history, not live.
  */
 function addMessageToBambooChat(
   author,
@@ -3361,39 +3701,35 @@ function addMessageToBambooChat(
   const msgContainer = document.getElementById("cwg-bamboo-chat-messages");
   if (!msgContainer) return;
 
-  const now = new Date();
-  const timeStr =
-    timeOverride ||
-    `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-
+  const timeStr = formatBambooChatTime(timeOverride);
   if (!timeOverride && bambooSettings.saveChatHistory) {
     pushToChatHistory({ author, text, isSystem, isMe, timeStr });
   }
 
   const safeTimeStr = escapeBambooChatHTML(timeStr);
   const safeAuthor = escapeBambooChatHTML(author);
-  const safeText = escapeBambooChatHTML(text);
+  let safeText = escapeBambooChatHTML(text);
+  let isMentioned = false;
 
-  let messageHTML = "";
-
-  if (isSystem) {
-    messageHTML = `
-      <div class="bamboo-chat-msg system">
-        <span class="time">[${safeTimeStr}]</span>
-        <span class="text">${safeText}</span>
-      </div>
-    `;
-  } else {
-    const selfClass = isMe ? " self" : "";
-    messageHTML = `
-      <div class="bamboo-chat-msg${selfClass}">
-        <span class="time">[${safeTimeStr}]</span>
-        <span class="author">${safeAuthor}</span>: 
-        <span class="text">${safeText}</span>
-      </div>
-    `;
+  if (!isSystem && (!isMe || DEBUG_SELF_MENTION)) {
+    const mentionResult = processBambooChatMentions(safeText);
+    safeText = mentionResult.processedText;
+    isMentioned = mentionResult.isMentioned;
   }
 
+  if (isMentioned && !timeOverride) {
+    const soundId = bambooSettings.chatMentionSound;
+    const volume = bambooSettings.chatMentionVolume || 5;
+    if (soundId) soundManager.playSound(soundId, volume).catch(() => {});
+  }
+
+  const messageHTML = buildBambooChatMessageHTML(
+    safeAuthor,
+    safeText,
+    isSystem,
+    isMe,
+    safeTimeStr,
+  );
   msgContainer.insertAdjacentHTML("beforeend", messageHTML);
   msgContainer.scrollTop = msgContainer.scrollHeight;
 }
