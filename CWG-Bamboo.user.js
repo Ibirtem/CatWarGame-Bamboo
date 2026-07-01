@@ -514,8 +514,8 @@ function injectCustomStyles() {
 
         #cwg-bamboo-chat {
           position: fixed;
-          bottom: 70px;
-          left: 20px;
+          bottom: 60px;
+          left: 10px;
           width: 420px;
           display: flex;
           flex-direction: column;
@@ -3068,8 +3068,12 @@ function initLocationHUD() {
     locElement.id = "cwg-bamboo-location";
     locElement.innerText = "📍 Sync...";
 
+    const dateElement = document.getElementById("cwg-bamboo-date");
     const timeElement = document.getElementById("cwg-bamboo-time");
-    if (timeElement) {
+
+    if (dateElement) {
+      targetContainer.insertBefore(locElement, dateElement);
+    } else if (timeElement) {
       targetContainer.insertBefore(locElement, timeElement);
     } else {
       targetContainer.appendChild(locElement);
