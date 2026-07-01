@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CWG - Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.2.0-06.26
+// @version      v1.3.0-06.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
@@ -31,6 +31,8 @@ const bambooDefaultSettings = {
   showDateHUD: false,
   showLocationHUD: false,
   showActionHotbar: false,
+  enableHPBar: false,
+  showSkillsHUD: false,
 
   enableBambooChat: false,
   enableLogging: false,
@@ -473,13 +475,13 @@ function injectCustomStyles() {
           height: 30px;
           box-sizing: border-box;
           margin-left: 8px;
-          border-radius: 12px;
+          border-radius: 16px;
           line-height: 1;
         }
 
         .bamboo-circular-btn {
-          background-color: var(--bamboo-hud-upper-bg);
-          border: 1px solid var(--bamboo-hud-upper-border);
+          background-color: var(--bamboo-msg-bg);
+          border: 1px solid var(--bamboo-msg-border);
           color: var(--bamboo-hud-upper-text);
           
           width: 34px;
@@ -1227,6 +1229,76 @@ function injectCustomStyles() {
         .tc-input[type="number"] {
           -moz-appearance: textfield;
         }
+
+        /* --- UNIVERSAL PROGRESS BAR --- */
+        .bamboo-progress-container {
+          display: flex;
+          align-items: center;
+          flex-grow: 1;
+          width: 100%;
+        }
+
+        .bamboo-progress-bar {
+          flex-grow: 1;
+          height: 16px;
+          background: rgba(0, 0, 0, 0.5);
+          border-radius: 8px;
+          overflow: hidden;
+          position: relative;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.6);
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+
+        .bamboo-progress-fill {
+          position: absolute;
+          left: 0;
+          top: 0;
+          height: 100%;
+          background: var(--bamboo-progress-gradient, linear-gradient(90deg, #a3e635, #22c55e));
+          border-radius: 8px;
+          transition: width 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+          z-index: 1;
+        }
+
+        .bamboo-progress-text {
+          position: relative;
+          z-index: 2;
+          font-size: 14px;
+          font-weight: 700;
+          color: #ffffff;
+          text-shadow: 1px 1px 3px rgb(0 0 0);
+          font-family: monospace, sans-serif;
+          white-space: nowrap;
+          pointer-events: none;
+        }
+
+        /* --- HP HUD CONTEXT OVERRIDES --- */
+        .bamboo-hp-active div[class*="MuiPaper-root"][ratio] {
+          padding: 2px;
+          min-width: 175px !important;
+          max-width: 250px !important;
+          box-sizing: border-box !important;
+        }
+
+        .bamboo-hp-active div[class*="MuiPaper-root"][ratio] svg {
+          flex-shrink: 0 !important;
+          margin-right: 6px !important;
+        }
+
+        .bamboo-hp-active div[class*="MuiPaper-root"][ratio] span[class*="MuiTypography-root"]:not(.bamboo-progress-text) {
+          display: none !important;
+        }
+
+        .bamboo-hp-active div[class*="MuiPaper-root"][ratio] > div[class*="MuiBox-root"] {
+          display: flex !important;
+          align-items: center !important;
+          justify-content: flex-start !important;
+          width: 100% !important;
+          box-sizing: border-box !important;
+        }
     `;
   document.head.appendChild(style);
 }
@@ -1879,21 +1951,23 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
         </div>
 
         <div class="bamboo-setting-row">
-          <span>Показывать время</span>
+          <span>Показывать игровое время</span>
           <input
             type="checkbox"
             class="bamboo-checkbox"
             data-setting="showTimeHUD"
           />
         </div>
+
         <div class="bamboo-setting-row">
-          <span>Показывать дату</span>
+          <span>Показывать игровую дату</span>
           <input
             type="checkbox"
             class="bamboo-checkbox"
             data-setting="showDateHUD"
           />
         </div>
+
         <div class="bamboo-setting-row">
           <span>Показывать локацию</span>
           <input
@@ -1902,6 +1976,25 @@ const getSettingsModalTemplate = (errorHTML) => /* HTML */ `
             data-setting="showLocationHUD"
           />
         </div>
+
+        <div class="bamboo-setting-row">
+          <span>Полоска здоровья (вместо %)</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="enableHPBar"
+          />
+        </div>
+
+        <div class="bamboo-setting-row">
+          <span>Показывать панель навыков</span>
+          <input
+            type="checkbox"
+            class="bamboo-checkbox"
+            data-setting="showSkillsHUD"
+          />
+        </div>
+
         <div class="bamboo-setting-row">
           <span>Панель действий (Хот-бар)</span>
           <input
@@ -2131,6 +2224,22 @@ function bindSettingsListeners() {
         } else {
           document.body.classList.remove("bamboo-hotbar-active");
           if (hotbar) hotbar.style.display = "none";
+        }
+      }
+
+      if (setting === "enableHPBar") {
+        if (element.checked) {
+          initHPBar();
+        } else {
+          removeHPBar();
+        }
+      }
+
+      if (setting === "showSkillsHUD") {
+        if (element.checked) {
+          initSkillsHUD();
+        } else {
+          removeSkillsHUD();
         }
       }
 
@@ -2818,7 +2927,7 @@ function triggerEventSoundNotification() {
 
 /**
  * Initializes the dynamic event notification observer using setupMutationObserver.
- * Leverages the `:has()` pseudo-class to target the parent container safely.
+ * Leverages the `:has()` pseudo-class to target the parent container.
  */
 function initEventNotificationObserver() {
   const parentSelector = 'div:has(> button[aria-label="open events"])';
@@ -2856,6 +2965,231 @@ function initEventNotificationObserver() {
     500,
     150,
   );
+}
+
+let hpBarInterval = null;
+
+/**
+ * Initializes and starts the health bar update cycle.
+ */
+function initHPBar() {
+  if (!bambooSettings.enableHPBar) return;
+
+  document.body.classList.add("bamboo-hp-active");
+  updateHPBar();
+
+  if (!hpBarInterval) {
+    hpBarInterval = setInterval(updateHPBar, 300);
+  }
+}
+
+/**
+ * Removes the custom stripe and restores the default appearance.
+ */
+function removeHPBar() {
+  document.body.classList.remove("bamboo-hp-active");
+  if (hpBarInterval) {
+    clearInterval(hpBarInterval);
+    hpBarInterval = null;
+  }
+  const customBar = document.querySelector(
+    ".bamboo-progress-container.bamboo-hp-progress",
+  );
+  if (customBar) customBar.remove();
+}
+
+/**
+ * Finds the container and updates the fill percentage and text (current/max HP).
+ */
+function updateHPBar() {
+  if (!bambooSettings.enableHPBar) return;
+
+  const hpContainer = document.querySelector(
+    'div[class*="MuiPaper-root"][ratio]',
+  );
+  if (!hpContainer) return;
+
+  const innerBox = hpContainer.querySelector('div[class*="MuiBox-root"]');
+  if (!innerBox) return;
+
+  let customContainer = innerBox.querySelector(
+    ".bamboo-progress-container.bamboo-hp-progress",
+  );
+  if (!customContainer) {
+    customContainer = document.createElement("div");
+    customContainer.className = "bamboo-progress-container bamboo-hp-progress";
+    customContainer.innerHTML = `
+      <div class="bamboo-progress-bar">
+        <div class="bamboo-progress-fill"></div>
+        <span class="bamboo-progress-text">Sync...</span>
+      </div>
+    `;
+    innerBox.appendChild(customContainer);
+  }
+
+  const gameWindow =
+    typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+  const me = gameWindow.CWGPlayground?.me();
+  if (me && me.hp) {
+    const val = typeof me.hp.value === "number" ? me.hp.value : 0;
+    const max = typeof me.hp.max === "number" ? me.hp.max : 100;
+    const pct = max > 0 ? (val / max) * 100 : 0;
+
+    const fillEl = customContainer.querySelector(".bamboo-progress-fill");
+    const textEl = customContainer.querySelector(".bamboo-progress-text");
+
+    if (fillEl) fillEl.style.width = `${pct}%`;
+    if (textEl) textEl.textContent = `${val}/${max}`;
+  }
+}
+
+/**
+ * Grid of limits and visual styles for character skills.
+ */
+const bambooSkillsConfig = {
+  fight: {
+    name: "Боевое умение",
+    icon: "⚔️",
+    thresholds: [0, 4, 16, 58, 112, 208, 358, 604, 1000],
+    gradient: "linear-gradient(90deg, #a3e635, #22c55e)",
+    getExp: (me) => me.fightLevel?.exp,
+    visible: () => true,
+  },
+  medicine: {
+    name: "Целительство",
+    icon: "⚕️",
+    thresholds: [0, 30, 90, 170, 270, 390, 520, 660, 810],
+    gradient: "linear-gradient(90deg, #38ef7d, #11998e)",
+    getExp: (me) => me.medicineSkill?.exp,
+    visible: (me) => (me.medicineSkill?.exp || 0) > 0,
+  },
+};
+
+/**
+ * Calculates the level and progress of the scale based on cumulative experience and thresholds.
+ */
+function calculateLevelProgress(totalExp, thresholds) {
+  let index = thresholds.length - 1;
+
+  while (index > 0 && thresholds[index] > totalExp) {
+    index--;
+  }
+
+  const start = thresholds[index];
+  const end =
+    thresholds[index + 1] !== undefined ? thresholds[index + 1] : start + 1000;
+
+  return {
+    level: index + 1,
+    current: Math.floor(totalExp - start),
+    max: end - start,
+  };
+}
+
+let skillsHUDInterval = null;
+
+/**
+ * Initializes mounts the skill bar inside #root.
+ */
+function initSkillsHUD() {
+  if (!bambooSettings.showSkillsHUD) return;
+
+  const targetSelector = ".MuiStack-root.css-1byqyzy";
+
+  setupSingleCallback(targetSelector, () => {
+    if (document.getElementById("cwg-bamboo-skills")) return;
+
+    const panel = document.createElement("div");
+    panel.className = "glass-panel";
+    panel.id = "cwg-bamboo-skills";
+    panel.style.cssText =
+      "position: fixed; top: 10px; left: 10px; display: flex; flex-direction: column; gap: 10px; padding: 12px; z-index: 997; min-width: 220px; box-sizing: border-box;";
+
+    document.body.appendChild(panel);
+    logger.log(
+      "[CWG-Bamboo] Skills Panel safely attached to body after HUD mount.",
+    );
+
+    updateSkillsHUD();
+
+    if (!skillsHUDInterval) {
+      skillsHUDInterval = setInterval(updateSkillsHUD, 400);
+    }
+  });
+}
+
+function removeSkillsHUD() {
+  if (skillsHUDInterval) {
+    clearInterval(skillsHUDInterval);
+    skillsHUDInterval = null;
+  }
+  const panel = document.getElementById("cwg-bamboo-skills");
+  if (panel) panel.remove();
+}
+
+/**
+ * Rendering skill progress bars based on the bambooSkillsConfig configuration.
+ */
+function updateSkillsHUD() {
+  if (!bambooSettings.showSkillsHUD) return;
+
+  const panel = document.getElementById("cwg-bamboo-skills");
+  if (!panel) return;
+
+  const gameWindow =
+    typeof unsafeWindow !== "undefined" ? unsafeWindow : window;
+  let me = null;
+
+  try {
+    me = gameWindow.CWGPlayground?.me();
+  } catch (e) {
+    logger.error("[CWG-Bamboo] Failed to fetch character data:", e);
+  }
+
+  if (!me) {
+    const existingPanel = document.getElementById("cwg-bamboo-skills");
+    if (existingPanel) existingPanel.style.display = "none";
+    return;
+  }
+
+  let html = `
+  `;
+
+  let visibleSkillsCount = 0;
+
+  for (const [key, config] of Object.entries(bambooSkillsConfig)) {
+    if (typeof config.visible === "function" && !config.visible(me)) {
+      continue;
+    }
+
+    const exp =
+      typeof config.getExp === "function" ? config.getExp(me) || 0 : 0;
+    const progress = calculateLevelProgress(exp, config.thresholds);
+
+    visibleSkillsCount++;
+
+    html += `
+      <div class="bamboo-skill-row" style="display: flex; flex-direction: column; gap: 4px; margin-top: 6px;">
+        <div style="display: flex; justify-content: space-between; font-size: 11px; font-weight: bold; color: #fff;">
+          <span>${config.icon} ${config.name}</span>
+          <span style="background: rgba(255,255,255,0.1); padding: 1px 4px; border-radius: 4px; font-size: 10px;">ур. ${progress.level}</span>
+        </div>
+        <div class="bamboo-progress-container" style="--bamboo-progress-gradient: ${config.gradient};">
+          <div class="bamboo-progress-bar">
+            <div class="bamboo-progress-fill" style="width: ${Math.max(0, Math.min(100, (progress.current / progress.max) * 100))}%"></div>
+            <span class="bamboo-progress-text">${progress.current}/${progress.max}</span>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  if (visibleSkillsCount === 0) {
+    panel.style.display = "none";
+  } else {
+    panel.style.display = "flex";
+    panel.innerHTML = html;
+  }
 }
 
 // ====================================================================================================================
@@ -4200,6 +4534,14 @@ function initPlayPage() {
 
   if (bambooSettings.showLocationHUD) {
     initLocationHUD();
+  }
+
+  if (bambooSettings.enableHPBar) {
+    initHPBar();
+  }
+
+  if (bambooSettings.showSkillsHUD) {
+    initSkillsHUD();
   }
 
   if (bambooSettings.showActionHotbar) {
