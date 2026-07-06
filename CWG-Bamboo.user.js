@@ -2766,7 +2766,6 @@ function tagNativeLocationStack() {
 
 /**
  * Injects a circular settings button (🎋) into the game's native top-right utility button stack.
- * Places it beautifully next to the native fullscreen and gear buttons.
  */
 function initSettingsButton() {
   const utilityStackSelector = ".MuiStack-root.css-1xhj18k";
@@ -2783,7 +2782,14 @@ function initSettingsButton() {
     settingsBtn.className =
       "MuiButtonBase-root MuiIconButton-root MuiIconButton-sizeSmall bamboo-circular-btn";
     settingsBtn.id = "cwg-bamboo-settings-btn";
-    settingsBtn.innerHTML = "🎋";
+
+    settingsBtn.innerHTML = `
+      <img 
+        src="https://raw.githubusercontent.com/Ibirtem/CatWarGame-Bamboo/main/images/icons/bamboo.png" 
+        alt="Bamboo Settings" 
+        style="width: 22px; height: 22px; object-fit: contain; pointer-events: none;" 
+      />
+    `;
     settingsBtn.title = "CWG-Bamboo Settings";
     settingsBtn.type = "button";
 
