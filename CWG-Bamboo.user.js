@@ -1531,7 +1531,11 @@ const playerManager = {
   _tick() {
     const me = this.me;
     if (!me) return;
-    this._watchers.forEach((w) => {
+
+    const activeWatchers = [...this._watchers];
+
+    activeWatchers.forEach((w) => {
+      if (!this._watchers.includes(w)) return;
       try {
         const val = w.getter(me);
         if (val !== w.lastValue) {
@@ -3638,15 +3642,13 @@ function processBambooChatMentions(safeText) {
 
     const regex = new RegExp(
       `(^|\\s|[.,!?])(${safeMyNamePattern})(?=$|\\s|[.,!?])`,
-      "gi",
+      "gi"
     );
 
-    if (regex.test(processedText)) {
+    processedText = processedText.replace(regex, (match, p1, p2) => {
       isMentioned = true;
-      processedText = processedText.replace(regex, (match, p1, p2) => {
-        return `${p1}<span class="bamboo-mention">${p2}</span>`;
-      });
-    }
+      return `${p1}<span class="bamboo-mention">${p2}</span>`;
+    });
   }
   return { isMentioned, processedText };
 }
