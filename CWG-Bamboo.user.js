@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         CWG - Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.3.0-06.26
+// @version      v1.3.0-07.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
