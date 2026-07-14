@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         CWG - Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.3.0-07.26
+// @version      v1.4.0-07.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
 // @supportURL
 // @homepageURL  https://ibirtem.github.io/CatWarGame-Bamboo-Pages/
-// @match        *://playtest.cw-game.ru/play*
+// @match        *://*.cw-game.ru/play*
 // @updateURL    https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @downloadURL  https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @license      Apache-2.0
@@ -1327,6 +1327,13 @@ function injectCustomStyles() {
           justify-content: flex-start !important;
           width: 100% !important;
           box-sizing: border-box !important;
+          position: relative !important;
+        }
+
+        .bamboo-hp-active div[aria-label="Gift of Nine Lives"] {
+          margin: 0px;
+          position: absolute;
+          bottom: -2px;
         }
 
         .bamboo-mention {
@@ -3058,6 +3065,7 @@ function getLocationEmoji(extraInfo) {
 
   const info = extraInfo.toLowerCase();
   if (info.includes("бабочк")) return "🦋";
+  if (info.includes("herb") || info.includes("трав")) return "🌿";
 
   return "✨";
 }
@@ -3233,7 +3241,7 @@ function removeHPBar() {
 }
 
 /**
- * Finds the container and updates the fill percentage and text (current/max HP).
+ * Calculates and updates the HP progress bar fill and text.
  */
 function updateHPBar() {
   if (!bambooSettings.enableHPBar) return;
@@ -3263,8 +3271,12 @@ function updateHPBar() {
 
   const me = playerManager.me;
   if (me?.hp) {
-    const val = typeof me.hp.value === "number" ? me.hp.value : 0;
-    const max = typeof me.hp.max === "number" ? me.hp.max : 100;
+    const rawVal = typeof me.hp.value === "number" ? me.hp.value : 0;
+    const rawMax = typeof me.hp.max === "number" ? me.hp.max : 100;
+
+    const val = Math.round(rawVal * 100) / 100;
+    const max = Math.round(rawMax * 100) / 100;
+
     const pct = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
 
     const fillEl = customContainer.querySelector(".bamboo-progress-fill");
@@ -3642,7 +3654,7 @@ function processBambooChatMentions(safeText) {
 
     const regex = new RegExp(
       `(^|\\s|[.,!?])(${safeMyNamePattern})(?=$|\\s|[.,!?])`,
-      "gi"
+      "gi",
     );
 
     processedText = processedText.replace(regex, (match, p1, p2) => {
