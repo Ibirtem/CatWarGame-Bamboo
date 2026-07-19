@@ -252,63 +252,71 @@ const packetHandlers = {
   const OriginalWebSocket = gameWindow.WebSocket;
 
   if (OriginalWebSocket) {
-    gameWindow.WebSocket = function (url, protocols) {
-      if (bambooSettings.enableNetworkLogging) {
-        console.log(`[CWG-Bamboo] Intercepted WebSocket connection to: ${url}`);
-      }
-      const ws = new OriginalWebSocket(url, protocols);
-
-      ws.addEventListener("open", () => {
-        networkManager.activeSocket = ws;
-        logger.log(
-          "[CWG-Bamboo] WebSocket opened and captured by networkManager.",
-        );
-      });
-
-      ws.addEventListener("close", () => {
-        if (networkManager.activeSocket === ws) {
-          networkManager.activeSocket = null;
-          logger.log(
-            "[CWG-Bamboo] WebSocket closed. networkManager reference cleared.",
+    const WebSocketProxy = new Proxy(OriginalWebSocket, {
+      construct(target, args) {
+        if (bambooSettings.enableNetworkLogging) {
+          console.log(
+            `[CWG-Bamboo] Intercepted WebSocket connection to: ${args[0]}`,
           );
         }
-      });
 
-      ws.addEventListener("message", (event) => {
-        try {
-          if (typeof event.data === "string") {
-            const packet = JSON.parse(event.data);
+        // Безопасно конструируем нативный сокет с сохранением прототипов
+        const ws = Reflect.construct(target, args);
 
-            packetHandlers.process(packet);
+        ws.addEventListener("open", () => {
+          networkManager.activeSocket = ws;
+          logger.log(
+            "[CWG-Bamboo] WebSocket opened and captured by networkManager.",
+          );
+        });
 
+        ws.addEventListener("close", () => {
+          if (networkManager.activeSocket === ws) {
+            networkManager.activeSocket = null;
+            logger.log(
+              "[CWG-Bamboo] WebSocket closed. networkManager reference cleared.",
+            );
+          }
+        });
+
+        ws.addEventListener("message", (event) => {
+          try {
+            if (typeof event.data === "string") {
+              const packet = JSON.parse(event.data);
+
+              packetHandlers.process(packet);
+
+              if (bambooSettings.enableNetworkLogging) {
+                console.log("[CWG-Bamboo WS Packet IN]", packet);
+              }
+            }
+          } catch (e) {
             if (bambooSettings.enableNetworkLogging) {
-              console.log("[CWG-Bamboo WS Packet IN]", packet);
+              console.log("[CWG-Bamboo WS Raw IN]", event.data);
             }
           }
-        } catch (e) {
+        });
+
+        const originalSend = ws.send;
+        ws.send = function (data) {
           if (bambooSettings.enableNetworkLogging) {
-            console.log("[CWG-Bamboo WS Raw IN]", event.data);
+            try {
+              const parsed = JSON.parse(data);
+              console.log("[CWG-Bamboo WS Packet OUT-NATIVE]", parsed);
+            } catch (e) {
+              console.log("[CWG-Bamboo WS Raw OUT-NATIVE]", data);
+            }
           }
-        }
-      });
+          return originalSend.apply(this, arguments);
+        };
 
-      const originalSend = ws.send;
-      ws.send = function (data) {
-        if (bambooSettings.enableNetworkLogging) {
-          try {
-            const parsed = JSON.parse(data);
-            console.log("[CWG-Bamboo WS Packet OUT-NATIVE]", parsed);
-          } catch (e) {
-            console.log("[CWG-Bamboo WS Raw OUT-NATIVE]", data);
-          }
-        }
-        return originalSend.apply(this, arguments);
-      };
+        return ws;
+      },
+    });
 
-      return ws;
-    };
-    gameWindow.WebSocket.prototype = OriginalWebSocket.prototype;
-    logger.log("[CWG-Bamboo] WebSocket Interceptor armed.");
+    gameWindow.WebSocket = WebSocketProxy;
+
+    logger.log("[CWG-Bamboo] WebSocket Interceptor armed via ES6 Proxy.");
   }
 
   // -------------------------------------------------------------------------
