@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         CWG - Bamboo
 // @namespace    http://tampermonkey.net/
-// @version      v1.3.0-07.26
+// @version      v1.4.0-07.26
 // @description  A mod that helps and expands your gameplay...
 // @author       Ibirtem
 // @copyright    2026, Ibirtem
 // @supportURL
 // @homepageURL  https://ibirtem.github.io/CatWarGame-Bamboo-Pages/
-// @match        *://playtest.cw-game.ru/play*
+// @match        *://*.cw-game.ru/play*
 // @updateURL    https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @downloadURL  https://github.com/Ibirtem/CatWarGame-Bamboo/raw/main/CWG-Bamboo.user.js
 // @license      Apache-2.0
@@ -249,66 +249,82 @@ const packetHandlers = {
   // -------------------------------------------------------------------------
   // 1. WEBSOCKET INTERCEPTOR
   // -------------------------------------------------------------------------
-  const OriginalWebSocket = gameWindow.WebSocket;
+  try {
+    const OriginalWebSocket = gameWindow.WebSocket;
 
-  if (OriginalWebSocket) {
-    gameWindow.WebSocket = function (url, protocols) {
-      if (bambooSettings.enableNetworkLogging) {
-        console.log(`[CWG-Bamboo] Intercepted WebSocket connection to: ${url}`);
-      }
-      const ws = new OriginalWebSocket(url, protocols);
-
-      ws.addEventListener("open", () => {
-        networkManager.activeSocket = ws;
-        logger.log(
-          "[CWG-Bamboo] WebSocket opened and captured by networkManager.",
-        );
-      });
-
-      ws.addEventListener("close", () => {
-        if (networkManager.activeSocket === ws) {
-          networkManager.activeSocket = null;
-          logger.log(
-            "[CWG-Bamboo] WebSocket closed. networkManager reference cleared.",
-          );
-        }
-      });
-
-      ws.addEventListener("message", (event) => {
-        try {
-          if (typeof event.data === "string") {
-            const packet = JSON.parse(event.data);
-
-            packetHandlers.process(packet);
-
-            if (bambooSettings.enableNetworkLogging) {
-              console.log("[CWG-Bamboo WS Packet IN]", packet);
-            }
-          }
-        } catch (e) {
+    if (OriginalWebSocket) {
+      const WebSocketProxy = new Proxy(OriginalWebSocket, {
+        construct(target, args) {
           if (bambooSettings.enableNetworkLogging) {
-            console.log("[CWG-Bamboo WS Raw IN]", event.data);
+            console.log(
+              `[CWG-Bamboo] Intercepted WebSocket connection to: ${args[0]}`,
+            );
           }
-        }
+          const ws = Reflect.construct(target, args);
+
+          ws.addEventListener("open", () => {
+            networkManager.activeSocket = ws;
+            logger.log(
+              "[CWG-Bamboo] WebSocket opened and captured by networkManager.",
+            );
+          });
+
+          ws.addEventListener("close", () => {
+            if (networkManager.activeSocket === ws) {
+              networkManager.activeSocket = null;
+              logger.log(
+                "[CWG-Bamboo] WebSocket closed. networkManager reference cleared.",
+              );
+            }
+          });
+
+          ws.addEventListener("message", (event) => {
+            try {
+              if (typeof event.data === "string") {
+                const packet = JSON.parse(event.data);
+
+                packetHandlers.process(packet);
+
+                if (bambooSettings.enableNetworkLogging) {
+                  console.log("[CWG-Bamboo WS Packet IN]", packet);
+                }
+              }
+            } catch (e) {
+              logger.error(
+                "[CWG-Bamboo] Error processing incoming WebSocket message:",
+                e,
+              );
+              if (bambooSettings.enableNetworkLogging) {
+                console.log("[CWG-Bamboo WS Raw IN]", event.data);
+              }
+            }
+          });
+
+          const originalSend = ws.send;
+          ws.send = function (data) {
+            if (bambooSettings.enableNetworkLogging) {
+              try {
+                const parsed = JSON.parse(data);
+                console.log("[CWG-Bamboo WS Packet OUT-NATIVE]", parsed);
+              } catch (e) {
+                console.log("[CWG-Bamboo WS Raw OUT-NATIVE]", data);
+              }
+            }
+            return originalSend.apply(this, arguments);
+          };
+
+          return ws;
+        },
       });
 
-      const originalSend = ws.send;
-      ws.send = function (data) {
-        if (bambooSettings.enableNetworkLogging) {
-          try {
-            const parsed = JSON.parse(data);
-            console.log("[CWG-Bamboo WS Packet OUT-NATIVE]", parsed);
-          } catch (e) {
-            console.log("[CWG-Bamboo WS Raw OUT-NATIVE]", data);
-          }
-        }
-        return originalSend.apply(this, arguments);
-      };
-
-      return ws;
-    };
-    gameWindow.WebSocket.prototype = OriginalWebSocket.prototype;
-    logger.log("[CWG-Bamboo] WebSocket Interceptor armed.");
+      gameWindow.WebSocket = WebSocketProxy;
+      logger.log("[CWG-Bamboo] WebSocket Interceptor armed via ES6 Proxy.");
+    }
+  } catch (err) {
+    console.error(
+      "[CWG-Bamboo] Critical failure during WebSocket Interceptor initialization:",
+      err,
+    );
   }
 
   // -------------------------------------------------------------------------
@@ -1327,6 +1343,13 @@ function injectCustomStyles() {
           justify-content: flex-start !important;
           width: 100% !important;
           box-sizing: border-box !important;
+          position: relative !important;
+        }
+
+        .bamboo-hp-active div[aria-label="Gift of Nine Lives"] {
+          margin: 0px;
+          position: absolute;
+          bottom: -2px;
         }
 
         .bamboo-mention {
@@ -3058,6 +3081,7 @@ function getLocationEmoji(extraInfo) {
 
   const info = extraInfo.toLowerCase();
   if (info.includes("бабочк")) return "🦋";
+  if (info.includes("herb") || info.includes("трав")) return "🌿";
 
   return "✨";
 }
@@ -3233,7 +3257,7 @@ function removeHPBar() {
 }
 
 /**
- * Finds the container and updates the fill percentage and text (current/max HP).
+ * Calculates and updates the HP progress bar fill and text.
  */
 function updateHPBar() {
   if (!bambooSettings.enableHPBar) return;
@@ -3263,8 +3287,12 @@ function updateHPBar() {
 
   const me = playerManager.me;
   if (me?.hp) {
-    const val = typeof me.hp.value === "number" ? me.hp.value : 0;
-    const max = typeof me.hp.max === "number" ? me.hp.max : 100;
+    const rawVal = Number.isFinite(me.hp.value) ? me.hp.value : 0;
+    const rawMax = Number.isFinite(me.hp.max) ? me.hp.max : 100;
+
+    const val = Math.round(rawVal * 100) / 100;
+    const max = Math.round(rawMax * 100) / 100;
+
     const pct = max > 0 ? Math.max(0, Math.min(100, (val / max) * 100)) : 0;
 
     const fillEl = customContainer.querySelector(".bamboo-progress-fill");
@@ -3642,7 +3670,7 @@ function processBambooChatMentions(safeText) {
 
     const regex = new RegExp(
       `(^|\\s|[.,!?])(${safeMyNamePattern})(?=$|\\s|[.,!?])`,
-      "gi"
+      "gi",
     );
 
     processedText = processedText.replace(regex, (match, p1, p2) => {
